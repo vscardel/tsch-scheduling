@@ -17,7 +17,7 @@ from . import MoteDefines as d
 
 # Simulator-wide modules
 import SimEngine
-from SimEngine.Mote.sf import SchedulingFunctionMSF
+from SimEngine.Mote.scheduling_functions.MSF import SchedulingFunctionMSF
 
 # =========================== defines =========================================
 

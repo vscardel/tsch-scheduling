@@ -19,8 +19,8 @@ from . import test_utils as u
 import SimEngine.Mote.MoteDefines as d
 from SimEngine import SimLog
 from SimEngine import SimEngine
-from SimEngine.Mote.sf import SchedulingFunctionMSF
-from SimEngine.Mote.sf import SchedulingFunctionSFNone
+from SimEngine.Mote.scheduling_functions import SchedulingFunctionMSF
+from SimEngine.Mote.scheduling_functions import SFNone
 
 # =========================== helpers =========================================
 
