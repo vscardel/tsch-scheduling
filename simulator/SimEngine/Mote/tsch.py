@@ -18,7 +18,7 @@ import netaddr
 
 # Mote sub-modules
 from . import MoteDefines as d
-from SimEngine.Mote.sf import SchedulingFunctionMSF
+from SimEngine.Mote.scheduling_functions.MSF import SchedulingFunctionMSF
 
 # Simulator-wide modules
 import SimEngine

@@ -7,7 +7,7 @@ import pytest
 
 from . import test_utils as u
 import SimEngine.Mote.MoteDefines as d
-from SimEngine.Mote.sf import SchedulingFunctionBase
+from SimEngine.Mote.sfBase import SchedulingFunctionBase
 from SimEngine         import SimLog
 
 # =========================== helpers =========================================
