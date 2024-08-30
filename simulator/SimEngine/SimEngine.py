@@ -36,6 +36,7 @@ class DiscreteEventEngine(threading.Thread):
     #===== start singleton
     _instance      = None
     _init          = False
+    SLOTFRAME_PERIOD_SIZE = 5
 
     def __new__(cls, *args, **kwargs):
         if not cls._instance:
@@ -68,6 +69,7 @@ class DiscreteEventEngine(threading.Thread):
             self.events                         = {}
             self.uniqueTagSchedule              = {}
             self.random_seed                    = None
+            self.slotframe_period_count         = 0
             self._init_additional_local_variables()
 
             # initialize parent class
@@ -331,6 +333,13 @@ class DiscreteEventEngine(threading.Thread):
     def _actionEndSlotframe(self):
         """Called at each end of slotframe_iteration."""
 
+        #time to notify scheduling function
+        if self.slotframe_period_count == self.SLOTFRAME_PERIOD_SIZE-1:
+            for mote in self.motes:
+                mote.sf.indication_slotframe_window_ending()
+            self.slotframe_period_count = 0
+        else:
+            self.slotframe_period_count = self.slotframe_period_count + 1
         slotframe_iteration = int(old_div(self.asn, self.settings.tsch_slotframeLength))
 
         # print

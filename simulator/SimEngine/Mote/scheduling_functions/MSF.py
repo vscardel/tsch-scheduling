@@ -83,6 +83,9 @@ class SchedulingFunctionMSF(SchedulingFunctionBase):
 
     # === indications from other layers
 
+    def indication_slotframe_window_ending(self):
+        pass
+
     def indication_neighbor_added(self, neighbor_mac_addr):
         pass
 
