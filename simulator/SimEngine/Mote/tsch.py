@@ -166,7 +166,7 @@ class Tsch(object):
         else:
             return 0
 
-    def get_available_slots(self, slotframe_handle=0):
+    def get_available_slots(self,slotframe_handle=0):
         if slotframe_handle in self.slotframes:
             return self.slotframes[slotframe_handle].get_available_slots()
         else:
@@ -1682,7 +1682,8 @@ class SlotFrame(object):
         :rtype: list
         """
         all_slots = set(range(self.length))
-        return list(all_slots - set(self.get_busy_slots()))
+        available_slots = list(all_slots - set(self.get_busy_slots()))
+        return available_slots
 
     def get_cells_filtered(self, mac_addr="", cell_options=None):
         """
