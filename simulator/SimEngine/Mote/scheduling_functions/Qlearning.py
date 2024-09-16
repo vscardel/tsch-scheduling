@@ -26,6 +26,7 @@ class SchedulingFunctionQlearning(SchedulingFunctionBase):
     RX_CELL_OPT   = [d.CELLOPTION_RX]
     NUM_INITIAL_NEGOTIATED_TX_CELLS = 1
     NUM_INITIAL_NEGOTIATED_RX_CELLS = 0
+    used_cells = []
 
     
     def __init__(self, mote):
@@ -60,6 +61,12 @@ class SchedulingFunctionQlearning(SchedulingFunctionBase):
                     cell_option      = cell_option,
                     command          = command
                 )
+        unused_cells  = self._get_unused_cells()
+        print('Lista de celulas utilizadas')
+        print(self.used_cells)
+        print('Lista de celulas nao utilizadas')
+        print(unused_cells)
+        self.used_cells = []
 
     def stop(self):
         self.mote.tsch.delete_slotframe(self.SLOTFRAME_HANDLE)
@@ -68,10 +75,16 @@ class SchedulingFunctionQlearning(SchedulingFunctionBase):
         pass # do nothing
 
     def indication_tx_cell_elapsed(self, cell, sent_packet):
-        pass
+        if not self._is_minimal_cell(cell):
+            position = {'channelOffset': cell.slot_offset, 'slotOffset': cell.channel_offset}
+            if position not in self.used_cells:
+                self.used_cells.append(position)
 
     def indication_rx_cell_elapsed(self, cell, received_packet):
-        pass # do nothing
+        if not self._is_minimal_cell(cell):
+            position = {'channelOffset': cell.slot_offset, 'slotOffset': cell.channel_offset}
+            if position not in self.used_cells:
+                self.used_cells.append(position)
 
     def indication_parent_change(self, old_parent, new_parent):
         assert old_parent != new_parent
@@ -154,7 +167,6 @@ class SchedulingFunctionQlearning(SchedulingFunctionBase):
             callback = lambda event, packet: self._clear_cells(peerMac)
         )
 
-
     def recv_request(self, packet):
         if   packet[u'app'][u'code'] == d.SIXP_CMD_ADD:
             self._receive_add_request(packet)
@@ -199,6 +211,28 @@ class SchedulingFunctionQlearning(SchedulingFunctionBase):
         if isinstance(available_slots,list):
             return list(set(available_slots) - self.locked_slots)
         return []
+    
+    def _get_unused_cells(self):
+        preferred_parent = self.mote.rpl.getPreferredParent()
+        available_cells = [
+                        {"channelOffset":cell.channel_offset,
+                            "slotOffset":cell.slot_offset} 
+                        for cell in self.mote.tsch.get_cells(
+                        preferred_parent,
+                        self.SLOTFRAME_HANDLE
+                    )
+                ]
+        unused_cells = []
+        for cell in available_cells:
+            if cell not in self.used_cells:
+                unused_cells.append(cell)
+        return unused_cells
+    
+    def _is_minimal_cell(self,cell):
+        if cell.slot_offset == 0 and cell.channel_offset == 0:
+            return True
+        return False
+
     # cell manipulation helpers
     def _lock_cells(self, cell_list):
         for cell in cell_list:
@@ -570,6 +604,7 @@ class SchedulingFunctionQlearning(SchedulingFunctionBase):
                 (num_cells <= len(candidate_cell_list))
             ):
             code = d.SIXP_RC_SUCCESS
+            #decide what cells to delete
             cell_list = random.sample(candidate_cell_list, num_cells)
 
             def callback(event, packet):

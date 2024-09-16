@@ -6,7 +6,7 @@
     },
     "settings": {
         "combination": {
-            "exec_numMotes":                               [4]
+            "exec_numMotes":                               [50]
         },
         "regular": {
             "exec_numSlotframesPerRun":                    1000,
@@ -32,7 +32,7 @@
             "fragmentation_ff_vrb_table_size":             50,
             "tsch_max_payload_len":                        90,
 
-            "sf_class":                                    "SFNone",
+            "sf_class":                                    "Qlearning",
 
             "tsch_slotDuration":                           0.010,
             "tsch_slotframeLength":                        101,
@@ -46,7 +46,7 @@
 
             "radio_stats_log_period_s":                    60,
 
-            "conn_class":                                  "Linear",
+            "conn_class":                                  "Random",
             "conn_simulate_ack_drop":                      false,
 
             "conn_trace":                                  null,
