@@ -55,17 +55,17 @@ class SchedulingFunctionQlearning(SchedulingFunctionBase):
                 command = random.choice([d.SIXP_CMD_ADD,d.SIXP_CMD_DELETE])
                 num_cells = random.randint(0,3)
                 cell_option = random.choice([[d.CELLOPTION_TX],[d.CELLOPTION_RX]])
-                self.sixp_interface(
-                    preferred_parent = preferred_parent,
-                    num_cells        = num_cells,
-                    cell_option      = cell_option,
-                    command          = command
-                )
-        unused_cells  = self._get_unused_cells()
-        print('Lista de celulas utilizadas')
-        print(self.used_cells)
-        print('Lista de celulas nao utilizadas')
-        print(unused_cells)
+                if command == d.SIXP_CMD_ADD:
+                    self.sixp_interface_add(
+                        preferred_parent = preferred_parent,
+                        num_cells        = num_cells,
+                        cell_option      = cell_option,
+                    )
+                else:
+                    self.sixp_interface_delete(
+                        preferred_parent = preferred_parent,
+                        cell_option      = cell_option
+                    )
         self.used_cells = []
 
     def stop(self):
@@ -212,7 +212,7 @@ class SchedulingFunctionQlearning(SchedulingFunctionBase):
             return list(set(available_slots) - self.locked_slots)
         return []
     
-    def _get_unused_cells(self):
+    def _get_unused_cells(self,cell_option):
         preferred_parent = self.mote.rpl.getPreferredParent()
         available_cells = [
                         {"channelOffset":cell.channel_offset,
@@ -221,7 +221,7 @@ class SchedulingFunctionQlearning(SchedulingFunctionBase):
                         preferred_parent,
                         self.SLOTFRAME_HANDLE
                     )
-                ]
+                if cell.options == cell_option]
         unused_cells = []
         for cell in available_cells:
             if cell not in self.used_cells:
@@ -683,54 +683,51 @@ class SchedulingFunctionQlearning(SchedulingFunctionBase):
                 slotframe_handle = self.SLOTFRAME_HANDLE
             )
 
-    def sixp_interface(
+    def sixp_interface_add(
             self,
             preferred_parent,
             num_cells,
             cell_option,
-            command
         ):
 
-        if command == d.SIXP_CMD_ADD:
+        cell_list = self._create_available_cell_list(self.DEFAULT_CELL_LIST_LEN)
+        # prepare _callback which is passed to SixP.send_request()
+        callback = self._create_add_request_callback(
+            preferred_parent,
+            num_cells,
+            cell_option,
+            cell_list
+        )
+        self.mote.sixp.send_request(
+            dstMac      = preferred_parent,
+            command     = d.SIXP_CMD_ADD,
+            cellOptions = cell_option,
+            numCells    = num_cells,
+            cellList    = cell_list,
+            callback    = callback
+        )
 
-            cell_list = self._create_available_cell_list(self.DEFAULT_CELL_LIST_LEN)
-            # prepare _callback which is passed to SixP.send_request()
-            callback = self._create_add_request_callback(
+    #num_cells is here only for backward compatibility
+    def sixp_interface_delete(
+            self,
+            preferred_parent,
+            cell_option,
+        ):
+
+        cells_to_delete = self._get_unused_cells(cell_option)
+
+        if len(cells_to_delete) >= 1:
+            callback = self._create_delete_request_callback(
                 preferred_parent,
-                num_cells,
-                cell_option,
-                cell_list
+                len(cells_to_delete),
+                cell_option
             )
             self.mote.sixp.send_request(
                 dstMac      = preferred_parent,
-                command     = d.SIXP_CMD_ADD,
+                command     = d.SIXP_CMD_DELETE,
                 cellOptions = cell_option,
-                numCells    = num_cells,
-                cellList    = cell_list,
+                numCells    = len(cells_to_delete),
+                cellList    = cells_to_delete,
                 callback    = callback
             )
-        elif command == d.SIXP_CMD_DELETE:
-
-            available_cells = [
-                            {"channelOffset":cell.channel_offset,
-                             "slotOffset":cell.slot_offset} 
-                            for cell in self.mote.tsch.get_cells(
-                            preferred_parent,
-                            self.SLOTFRAME_HANDLE
-            ) if cell.options == cell_option]
-            
-            if len(available_cells) >= 1:
-                callback = self._create_delete_request_callback(
-                    preferred_parent,
-                    num_cells,
-                    cell_option
-                )
-                self.mote.sixp.send_request(
-                    dstMac      = preferred_parent,
-                    command     = d.SIXP_CMD_DELETE,
-                    cellOptions = cell_option,
-                    numCells    = num_cells,
-                    cellList    = available_cells,
-                    callback    = callback
-                )
-    #################E################################
+#################################################
