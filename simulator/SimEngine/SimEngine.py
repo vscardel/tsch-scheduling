@@ -336,7 +336,7 @@ class DiscreteEventEngine(threading.Thread):
         #time to notify scheduling function
         if self.slotframe_period_count == self.SLOTFRAME_PERIOD_SIZE-1:
             for mote in self.motes:
-                mote.sf.indication_slotframe_window_ending()
+                mote.sf.indication_slotframe_window_ending(self.SLOTFRAME_PERIOD_SIZE)
             self.slotframe_period_count = 0
         else:
             self.slotframe_period_count = self.slotframe_period_count + 1

@@ -2,17 +2,10 @@ from __future__ import absolute_import
 # =========================== imports =========================================
 
 import random
-import sys
-import netaddr
 import SimEngine
-
-
-from builtins import range
-from builtins import object
-from abc import abstractmethod
-
 from .. import MoteDefines as d
-from .. import sixp
+from math import factorial as fat
+from math import e
 
 from SimEngine.Mote.sfBase import SchedulingFunctionBase
 
@@ -27,6 +20,8 @@ class SchedulingFunctionQlearning(SchedulingFunctionBase):
     NUM_INITIAL_NEGOTIATED_TX_CELLS = 1
     NUM_INITIAL_NEGOTIATED_RX_CELLS = 0
     used_cells = []
+    LAMBDA = 0
+    num_packets_in_current_slotframe = 0
 
     
     def __init__(self, mote):
@@ -48,25 +43,29 @@ class SchedulingFunctionQlearning(SchedulingFunctionBase):
 
     #indicates the ending of a window of X slotframes
     #X = SimEngine.SLOTFRAME_PERIOD_SIZE
-    def indication_slotframe_window_ending(self):
+    def indication_slotframe_window_ending(self,slotframe_period_size):
         if not self.mote.dagRoot:
             preferred_parent = self.mote.rpl.getPreferredParent()
             if preferred_parent:
-                command = random.choice([d.SIXP_CMD_ADD,d.SIXP_CMD_DELETE])
-                num_cells = random.randint(0,3)
-                cell_option = random.choice([[d.CELLOPTION_TX],[d.CELLOPTION_RX]])
-                if command == d.SIXP_CMD_ADD:
+                self.LAMBDA = self.num_packets_in_current_slotframe / slotframe_period_size
+                distribution = self._compute_poisson_packet_distribution(time_interval=slotframe_period_size)
+                num_packets_to_be_generated = self.compute_num_packets_to_be_generated(distribution)
+                print('mode id {0}'.format(self.mote.id))
+                print(num_packets_to_be_generated)
+
+                if num_packets_to_be_generated > 0:
                     self.sixp_interface_add(
                         preferred_parent = preferred_parent,
-                        num_cells        = num_cells,
-                        cell_option      = cell_option,
+                        num_cells        = num_packets_to_be_generated,
+                        cell_option      = [d.CELLOPTION_TX],
                     )
                 else:
                     self.sixp_interface_delete(
                         preferred_parent = preferred_parent,
-                        cell_option      = cell_option
+                        cell_option      = [d.CELLOPTION_TX]
                     )
         self.used_cells = []
+        self.num_packets_in_current_slotframe = 0
 
     def stop(self):
         self.mote.tsch.delete_slotframe(self.SLOTFRAME_HANDLE)
@@ -76,12 +75,14 @@ class SchedulingFunctionQlearning(SchedulingFunctionBase):
 
     def indication_tx_cell_elapsed(self, cell, sent_packet):
         if not self._is_minimal_cell(cell):
+            self.num_packets_in_current_slotframe = self.num_packets_in_current_slotframe + 1
             position = {'channelOffset': cell.slot_offset, 'slotOffset': cell.channel_offset}
             if position not in self.used_cells:
                 self.used_cells.append(position)
 
     def indication_rx_cell_elapsed(self, cell, received_packet):
         if not self._is_minimal_cell(cell):
+            self.num_packets_in_current_slotframe = self.num_packets_in_current_slotframe + 1
             position = {'channelOffset': cell.slot_offset, 'slotOffset': cell.channel_offset}
             if position not in self.used_cells:
                 self.used_cells.append(position)
@@ -205,6 +206,17 @@ class SchedulingFunctionQlearning(SchedulingFunctionBase):
         return ret_val
 
     #utility methods#
+
+    def _compute_poisson_packet_distribution(self,time_interval):
+        MAX_NUM_PACKETS = 10
+        distribution = []
+        for i in range(0,MAX_NUM_PACKETS + 1):
+            probability_i = (((self.LAMBDA*time_interval)**i) / fat(i))*(e**-(self.LAMBDA*time_interval))
+            distribution.append(probability_i)
+        return distribution
+    
+    def compute_num_packets_to_be_generated(self,distribution):
+        return distribution.index(max(distribution))
 
     def _get_available_slots(self):
         available_slots = self.mote.tsch.get_available_slots(self.SLOTFRAME_HANDLE)
