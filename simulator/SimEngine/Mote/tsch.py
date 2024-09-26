@@ -19,6 +19,7 @@ import netaddr
 # Mote sub-modules
 from . import MoteDefines as d
 from SimEngine.Mote.scheduling_functions.MSF import SchedulingFunctionMSF
+from SimEngine.Mote.scheduling_functions.Qlearning import SchedulingFunctionQlearning
 
 # Simulator-wide modules
 import SimEngine
@@ -443,20 +444,21 @@ class Tsch(object):
                 packet[u'mac'][u'priority'] = False
                 # add to txQueue
                 self.txQueue    += [packet]
+        
 
         if (
                 goOn
                 and
                 packet[u'mac'][u'dstMac'] != d.BROADCAST_ADDRESS
                 and
-                isinstance(self.mote.sf, SchedulingFunctionMSF)
+                (isinstance(self.mote.sf, SchedulingFunctionMSF) or isinstance(self.mote.sf, SchedulingFunctionQlearning))
                 and
                 not self.mote.sf.get_tx_cells(packet[u'mac'][u'dstMac'])
             ):
-            # on-demand allocation of autonomous TX cell
-            self.mote.sf.allocate_autonomous_tx_cell(
-                packet[u'mac'][u'dstMac']
-            )
+                # on-demand allocation of autonomous TX cell
+                self.mote.sf.allocate_autonomous_tx_cell(
+                    packet[u'mac'][u'dstMac']
+                )
 
         return goOn
 
@@ -873,6 +875,8 @@ class Tsch(object):
         # NOTE- lower value in the Join Metric field indicates that
         # connection of the beaconing device to a specific network
         # device determined by the higher layer is a shorter route.
+
+        #mac address of node with smallest join metric
         clock_source_mac_addr = min(
             self.received_eb_list,
             key=lambda x: self.received_eb_list[x][u'mac'][u'join_metric']
@@ -882,7 +886,7 @@ class Tsch(object):
             self.clock.sync(clock_source_mac_addr)
             self.setIsSync(True) # mote
 
-            # the mote that sent the EB is now by join proxy
+            # the mote that sent the EB is now my join proxy
             self.join_proxy = netaddr.EUI(clock_source_mac_addr)
 
             # add the minimal cell to the schedule (read from EB)

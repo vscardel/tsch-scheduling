@@ -3,6 +3,7 @@ from __future__ import absolute_import
 
 import random
 import SimEngine
+import netaddr
 from .. import MoteDefines as d
 from math import factorial as fat
 from math import e
@@ -37,23 +38,29 @@ class SchedulingFunctionQlearning(SchedulingFunctionBase):
             length           = slotframe_0.length
         )
 
+        self.allocate_autonomous_rx_cell()
+
         if self.mote.dagRoot:
             # do nothing
             pass
+        else:
+            self.allocate_autonomous_rx_cell()
+
 
     #indicates the ending of a window of X slotframes
     #X = SimEngine.SLOTFRAME_PERIOD_SIZE
     def indication_slotframe_window_ending(self,slotframe_period_size):
         if not self.mote.dagRoot:
             preferred_parent = self.mote.rpl.getPreferredParent()
-            if preferred_parent:
+            if preferred_parent and self.mote.clear_to_send_EBs_DATA():
+                print("Mote id {0}".format(self.mote.id))
+                print("Numero de pacotes gerados: {0}".format(self.num_packets_in_current_slotframe))
+                print('----------------------')
                 self.LAMBDA = self.num_packets_in_current_slotframe / slotframe_period_size
                 distribution = self._compute_poisson_packet_distribution(time_interval=slotframe_period_size)
                 num_packets_to_be_generated = self.compute_num_packets_to_be_generated(distribution)
-                print('mode id {0}'.format(self.mote.id))
-                print(num_packets_to_be_generated)
 
-                if num_packets_to_be_generated > 0:
+                if self.num_packets_in_current_slotframe > 0:
                     self.sixp_interface_add(
                         preferred_parent = preferred_parent,
                         num_cells        = num_packets_to_be_generated,
@@ -204,6 +211,17 @@ class SchedulingFunctionQlearning(SchedulingFunctionBase):
             ret_val = bool(tx_cells)
 
         return ret_val
+    
+    def get_tx_cells(self, mac_addr):
+        slotframe = self.mote.tsch.get_slotframe(
+            self.SLOTFRAME_HANDLE
+        )
+        if slotframe:
+            cells = slotframe.get_cells_by_mac_addr(mac_addr)
+            autonomous_tx_cell = self.get_autonomous_tx_cell(mac_addr)
+            return cells or autonomous_tx_cell
+        else:
+            return []
 
     #utility methods#
 
@@ -296,7 +314,79 @@ class SchedulingFunctionQlearning(SchedulingFunctionBase):
             # another peer. We need to have a locking or reservation mechanism
             # to avoid such a situation.
             raise
-    #################
+
+    def _housekeeping_collision(self):
+        """
+        Identify cells where schedule collisions occur.
+        draft-chang-6tisch-msf-01:
+            The key for detecting a schedule collision is that, if a node has
+            several cells to the same preferred parent, all cells should exhibit
+            the same PDR.  A cell which exhibits a PDR significantly lower than
+            the others indicates than there are collisions on that cell.
+        :return:
+        """
+
+        if self.mote.tsch.get_slotframe(self.SLOTFRAME_HANDLE) is None:
+            return
+
+        # for quick access; get preferred parent
+        preferred_parent = self.mote.rpl.getPreferredParent()
+
+        # collect TX cells which has enough numTX
+        tx_cell_list = [cell for cell in self.mote.tsch.get_cells(preferred_parent, self.SLOTFRAME_HANDLE) if cell.options == [d.CELLOPTION_TX]]
+        # pick up TX cells whose NumTx is larger than
+        # MSF_MIN_NUM_TX. This is an implementation decision, which is
+        # easier to implement than what section 5.3 of
+        # draft-ietf-6tisch-msf-03.txt describes as the step-2 of the
+        # house-keeping process.
+        tx_cell_list = {
+            cell.slot_offset: cell for cell in tx_cell_list if (
+                d.MSF_MIN_NUM_TX < cell.num_tx
+            )
+        }
+        # collect PDRs of the TX cells
+        def pdr(cell):
+            assert cell.num_tx > 0
+            return cell.num_tx_ack / float(cell.num_tx)
+        pdr_list = {
+            slotOffset: pdr(cell) for slotOffset, cell in list(tx_cell_list.items())
+        }
+
+        if len(pdr_list) > 0:
+            # find a cell to relocate using the highest PDR value
+            highest_pdr = max(pdr_list.values())
+            relocation_cell_list = [
+                {
+                    'slotOffset'   : slotOffset,
+                    'channelOffset': tx_cell_list[slotOffset].channel_offset
+                } for slotOffset, pdr in list(pdr_list.items()) if (
+                    d.MSF_RELOCATE_PDRTHRES < (highest_pdr - pdr)
+                )
+            ]
+            if (
+                    len(relocation_cell_list) > 0
+                    and
+                    self.retry_count[preferred_parent] == -1
+                ):
+                # reset retry counter
+                self.retry_count[preferred_parent] = 0
+                self._request_relocating_cells(
+                    neighbor             = preferred_parent,
+                    cell_options         = self.TX_CELL_OPT,
+                    num_relocating_cells = len(relocation_cell_list),
+                    cell_list            = relocation_cell_list
+                )
+        else:
+            # we don't have any TX cell whose PDR is available; do nothing
+            pass
+
+        # schedule next housekeeping
+        self.engine.scheduleIn(
+            delay         = d.MSF_HOUSEKEEPINGCOLLISION_PERIOD,
+            cb            = self._housekeeping_collision,
+            uniqueTag     = (self.mote.id, u'_housekeeping_collision'),
+            intraSlotOrder= d.INTRASLOTORDER_STACKTASKS,
+        )
 
     #################6P INTERFACE CODE################
 
@@ -646,7 +736,6 @@ class SchedulingFunctionQlearning(SchedulingFunctionBase):
         )
         for cell in cells:
             assert neighbor == cell.mac_addr
-            assert d.CELLOPTION_SHARED not in cell.options
             self.mote.tsch.deleteCell(
                 slotOffset       = cell.slot_offset,
                 channelOffset    = cell.channel_offset,
@@ -743,3 +832,111 @@ class SchedulingFunctionQlearning(SchedulingFunctionBase):
                 callback    = callback
             )
 #################################################
+    # autonomous cell
+    def get_autonomous_rx_cell(self):
+        slotframe = self.mote.tsch.get_slotframe(
+            self.SLOTFRAME_HANDLE
+        )
+        if slotframe:
+            cells = slotframe.get_cells_by_mac_addr(None)
+            if cells:
+                assert len(cells) == 1
+                assert cells[0].options == [d.CELLOPTION_RX]
+                ret = cells[0]
+            else:
+                ret = None
+        else:
+            ret = None
+        return ret
+
+    def allocate_autonomous_rx_cell(self):
+        mac_addr = self.mote.get_mac_addr()
+        slot_offset, channel_offset = self._compute_autonomous_cell(mac_addr)
+        self.mote.tsch.addCell(
+            slotOffset       = slot_offset,
+            channelOffset    = channel_offset,
+            neighbor         = None,
+            cellOptions      = [
+                d.CELLOPTION_RX
+            ],
+            slotframe_handle = self.SLOTFRAME_HANDLE
+        )
+
+    def get_autonomous_tx_cell(self, mac_addr):
+        slotframe = self.mote.tsch.get_slotframe(
+            self.SLOTFRAME_HANDLE
+        )
+        if slotframe:
+            cells = slotframe.get_cells_by_mac_addr(mac_addr)
+            autonomous_cells = [
+                cell for cell in cells
+                if (
+                        (d.CELLOPTION_TX in cell.options)
+                        and
+                        (d.CELLOPTION_SHARED in cell.options)
+                )
+            ]
+            if autonomous_cells:
+                assert len(autonomous_cells) == 1
+                ret = autonomous_cells[0]
+            else:
+                ret = None
+        else:
+            ret = None
+        return ret
+
+    def allocate_autonomous_tx_cell(self, mac_addr):
+        slot_offset, channel_offset = self._compute_autonomous_cell(mac_addr)
+        self.mote.tsch.addCell(
+            slotOffset       = slot_offset,
+            channelOffset    = channel_offset,
+            neighbor         = mac_addr,
+            cellOptions      = [
+                d.CELLOPTION_TX,
+                d.CELLOPTION_SHARED
+            ],
+            slotframe_handle = self.SLOTFRAME_HANDLE
+        )
+
+    def deallocate_autonomous_tx_cell(self, mac_addr):
+        slot_offset, channel_offset = self._compute_autonomous_cell(mac_addr)
+        self.mote.tsch.deleteCell(
+            slotOffset       = slot_offset,
+            channelOffset    = channel_offset,
+            neighbor         = mac_addr,
+            cellOptions      = [
+                d.CELLOPTION_TX,
+                d.CELLOPTION_SHARED
+            ],
+            slotframe_handle = self.SLOTFRAME_HANDLE
+        )
+
+    def _compute_autonomous_cell(self, mac_addr):
+        slotframe = self.mote.tsch.get_slotframe(
+            self.SLOTFRAME_HANDLE
+        )
+        hash_value = self._sax(mac_addr)
+
+        slot_offset = int(1 + (hash_value % (slotframe.length - 1)))
+        channel_offset = int(hash_value % self.settings.phy_numChans)
+
+        return (slot_offset, channel_offset)
+
+    # SAX
+    def _sax(self, mac_addr):
+        # XXX: a concrete definition of this hash function is needed to be
+        # provided by the draft
+
+        LEFT_SHIFT_NUM = 5
+        RIGHT_SHIFT_NUM = 2
+
+        # assuming v (seed) is 0
+        hash_value = 0
+        for word in netaddr.EUI(mac_addr).words:
+            for byte in divmod(word, 0x100):
+                left_shifted = (hash_value << LEFT_SHIFT_NUM)
+                right_shifted = (hash_value >> RIGHT_SHIFT_NUM)
+                hash_value ^= left_shifted + right_shifted + byte
+
+        # assuming T (table size) is 16-bit
+        return hash_value & 0xFFFF
