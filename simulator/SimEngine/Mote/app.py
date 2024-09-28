@@ -265,3 +265,68 @@ class AppBurst(AppBase):
                 dstIp         = self.mote.rpl.dodagId,
                 packet_length = self.settings.app_pkLength
             )
+
+
+
+class AppRandom(AppBase):
+
+    """Send a packet periodically
+
+    Intervals are distributed uniformly between (pkPeriod-pkPeriodVar)
+    and (pkPeriod+pkPeriodVar).
+
+    The first timing to send a packet is randomly chosen between [next
+    asn, (next asn + pkPeriod)].
+    """
+
+    MAX_NUM_PACKETS = 10
+
+    def __init__(self, mote, **kwargs):
+        super(AppRandom, self).__init__(mote)
+        self.sending_first_packet = True
+
+    #======================== public ==========================================
+
+    def startSendingData(self):
+        if self.sending_first_packet:
+            self._schedule_transmission()
+
+    #======================== public ==========================================
+
+    def _schedule_transmission(self):
+        assert self.settings.app_pkPeriod >= 0
+        if self.settings.app_pkPeriod == 0:
+            return
+
+        if self.sending_first_packet:
+            # compute initial time within the range of [next asn, next asn+pkPeriod]
+            delay = self.settings.tsch_slotDuration + (self.settings.app_pkPeriod * random.random())
+            self.sending_first_packet = False
+        else:
+            # compute random delay
+            assert self.settings.app_pkPeriodVar < 1
+            delay = self.settings.app_pkPeriod * (1 + random.uniform(-self.settings.app_pkPeriodVar, self.settings.app_pkPeriodVar))
+
+        # schedule
+        self.engine.scheduleIn(
+            delay           = delay,
+            cb              = self._send_random_num_packets,
+            uniqueTag       = (
+                u'AppPeriodic',
+                u'scheduled_by_{0}'.format(self.mote.id)
+            ),
+            intraSlotOrder  = d.INTRASLOTORDER_ADMINTASKS,
+        )
+
+    def _send_random_num_packets(self):
+        if self.mote.rpl.dodagId == None:
+            # it seems we left the dodag; stop the transmission
+            self.sending_first_packet = True
+            return
+        for i in range(1,random.randint(1,self.MAX_NUM_PACKETS)+1):
+            self._send_packet(
+                dstIp          = self.mote.rpl.dodagId,
+                packet_length  = self.settings.app_pkLength
+            )
+        # schedule the next transmission
+        self._schedule_transmission()

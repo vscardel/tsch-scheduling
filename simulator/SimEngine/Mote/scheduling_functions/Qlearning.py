@@ -60,7 +60,7 @@ class SchedulingFunctionQlearning(SchedulingFunctionBase):
                 distribution = self._compute_poisson_packet_distribution(time_interval=slotframe_period_size)
                 num_packets_to_be_generated = self.compute_num_packets_to_be_generated(distribution)
 
-                if self.num_packets_in_current_slotframe > 0:
+                if num_packets_to_be_generated > 0:
                     self.sixp_interface_add(
                         preferred_parent = preferred_parent,
                         num_cells        = num_packets_to_be_generated,
