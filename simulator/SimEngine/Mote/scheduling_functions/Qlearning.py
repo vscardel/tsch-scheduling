@@ -22,7 +22,11 @@ class SchedulingFunctionQlearning(SchedulingFunctionBase):
     NUM_INITIAL_NEGOTIATED_RX_CELLS = 0
     used_cells = []
     LAMBDA = 0
+    QUEUE_OVERFLOW = False
+    UNUSED_CELL_RATE_MAX_THRESHOLD = 0.2
     num_packets_in_current_slotframe = 0
+    current_state = (0.0)
+
 
     
     def __init__(self, mote):
@@ -56,6 +60,15 @@ class SchedulingFunctionQlearning(SchedulingFunctionBase):
                 print("Mote id {0}".format(self.mote.id))
                 print("Numero de pacotes gerados: {0}".format(self.num_packets_in_current_slotframe))
                 print('----------------------')
+                unused_cell_rate = self.compute_unused_cells_rate()
+                print('QUEUE UNUSED_CELLS_HIGH')
+                next_state = (
+                    int(self.QUEUE_OVERFLOW),
+                    int(self.quantizing_unused_cells_rate(unused_cell_rate))
+                )
+                print(self.current_state)
+                print(next_state)
+                
                 self.LAMBDA = self.num_packets_in_current_slotframe / slotframe_period_size
                 distribution = self._compute_poisson_packet_distribution(time_interval=slotframe_period_size)
                 num_packets_to_be_generated = self.compute_num_packets_to_be_generated(distribution)
@@ -71,8 +84,11 @@ class SchedulingFunctionQlearning(SchedulingFunctionBase):
                         preferred_parent = preferred_parent,
                         cell_option      = [d.CELLOPTION_TX]
                     )
+                self.current_state = next_state
         self.used_cells = []
+        self.QUEUE_OVERFLOW = False
         self.num_packets_in_current_slotframe = 0
+        
 
     def stop(self):
         self.mote.tsch.delete_slotframe(self.SLOTFRAME_HANDLE)
@@ -93,6 +109,9 @@ class SchedulingFunctionQlearning(SchedulingFunctionBase):
             position = {'channelOffset': cell.slot_offset, 'slotOffset': cell.channel_offset}
             if position not in self.used_cells:
                 self.used_cells.append(position)
+
+    def indication_queue_full(self):
+        self.QUEUE_OVERFLOW = True
 
     def indication_parent_change(self, old_parent, new_parent):
         assert old_parent != new_parent
@@ -232,6 +251,22 @@ class SchedulingFunctionQlearning(SchedulingFunctionBase):
             probability_i = (((self.LAMBDA*time_interval)**i) / fat(i))*(e**-(self.LAMBDA*time_interval))
             distribution.append(probability_i)
         return distribution
+    
+    def compute_unused_cells_rate(self):
+        preferred_parent = self.mote.rpl.getPreferredParent()
+        if preferred_parent:
+            unused_cells_tx = self._get_unused_cells([d.CELLOPTION_TX])
+            unused_cells_rx = self._get_unused_cells([d.CELLOPTION_RX])
+            total_unused_cells = len(unused_cells_rx) + len(unused_cells_tx)
+            total_cells = len(self.mote.tsch.get_cells(preferred_parent,self.SLOTFRAME_HANDLE))
+            return float(total_unused_cells)/total_cells
+        return None
+    
+    def quantizing_unused_cells_rate(self,unused_cell_rate):
+        if unused_cell_rate > self.UNUSED_CELL_RATE_MAX_THRESHOLD:
+            return True 
+        return False
+
     
     def compute_num_packets_to_be_generated(self,distribution):
         return distribution.index(max(distribution))

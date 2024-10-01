@@ -387,6 +387,9 @@ class Tsch(object):
                 reason  = SimEngine.SimLog.DROPREASON_TXQUEUE_FULL
             )
 
+            if (isinstance(self.mote.sf, SchedulingFunctionQlearning)):
+                self.mote.sf.indication_queue_full()   
+
             # couldn't enqueue
             goOn = False
 

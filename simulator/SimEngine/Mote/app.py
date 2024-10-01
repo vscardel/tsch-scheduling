@@ -279,7 +279,7 @@ class AppRandom(AppBase):
     asn, (next asn + pkPeriod)].
     """
 
-    MAX_NUM_PACKETS = 10
+    MAX_NUM_PACKETS = 100
 
     def __init__(self, mote, **kwargs):
         super(AppRandom, self).__init__(mote)
