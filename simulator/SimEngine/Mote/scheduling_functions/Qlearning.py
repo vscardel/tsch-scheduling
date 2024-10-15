@@ -4,6 +4,7 @@ from __future__ import absolute_import
 import random
 import SimEngine
 import netaddr
+import numpy as np
 from .. import MoteDefines as d
 from math import factorial as fat
 from math import e
@@ -25,7 +26,12 @@ class SchedulingFunctionQlearning(SchedulingFunctionBase):
     QUEUE_OVERFLOW = False
     UNUSED_CELL_RATE_MAX_THRESHOLD = 0.2
     num_packets_in_current_slotframe = 0
-    current_state = (0.0)
+    current_state = (0,0)
+    EPSLON = None
+    MAX_EPSLON = 1.0           
+    MIN_EPSLON = 0.05           
+    EPSLON_DECAY_RATE = 0.005  
+    EPISODE = 0
 
 
     
@@ -57,18 +63,15 @@ class SchedulingFunctionQlearning(SchedulingFunctionBase):
         if not self.mote.dagRoot:
             preferred_parent = self.mote.rpl.getPreferredParent()
             if preferred_parent and self.mote.clear_to_send_EBs_DATA():
+                self.EPISODE = self.EPISODE + 1
+                self.EPSLON = self.MIN_EPSLON + (self.MAX_EPSLON - self.MIN_EPSLON)*np.exp(-self.EPSLON_DECAY_RATE*self.EPISODE)
                 print("Mote id {0}".format(self.mote.id))
-                print("Numero de pacotes gerados: {0}".format(self.num_packets_in_current_slotframe))
                 print('----------------------')
                 unused_cell_rate = self.compute_unused_cells_rate()
-                print('QUEUE UNUSED_CELLS_HIGH')
                 next_state = (
                     int(self.QUEUE_OVERFLOW),
                     int(self.quantizing_unused_cells_rate(unused_cell_rate))
                 )
-                print(self.current_state)
-                print(next_state)
-                
                 self.LAMBDA = self.num_packets_in_current_slotframe / slotframe_period_size
                 distribution = self._compute_poisson_packet_distribution(time_interval=slotframe_period_size)
                 num_packets_to_be_generated = self.compute_num_packets_to_be_generated(distribution)
@@ -92,6 +95,8 @@ class SchedulingFunctionQlearning(SchedulingFunctionBase):
 
     def stop(self):
         self.mote.tsch.delete_slotframe(self.SLOTFRAME_HANDLE)
+        self.EPSLON = 0
+        self.EPISODE = 0
 
     def indication_neighbor_added(self, neighbor_mac_addr):
         pass # do nothing
