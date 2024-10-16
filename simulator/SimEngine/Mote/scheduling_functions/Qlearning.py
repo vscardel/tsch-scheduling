@@ -4,6 +4,7 @@ from __future__ import absolute_import
 import random
 import SimEngine
 import netaddr
+import itertools
 import numpy as np
 from .. import MoteDefines as d
 from math import factorial as fat
@@ -32,6 +33,9 @@ class SchedulingFunctionQlearning(SchedulingFunctionBase):
     MIN_EPSLON = 0.05           
     EPSLON_DECAY_RATE = 0.005  
     EPISODE = 0
+    Q_table = dict()
+    STATE_SIZE = 2
+    ACTION_STATE_SIZE = 3
 
 
     
@@ -55,6 +59,7 @@ class SchedulingFunctionQlearning(SchedulingFunctionBase):
             pass
         else:
             self.allocate_autonomous_rx_cell()
+            self.initialize_q_table(self.STATE_SIZE,self.ACTION_STATE_SIZE)
 
 
     #indicates the ending of a window of X slotframes
@@ -63,8 +68,10 @@ class SchedulingFunctionQlearning(SchedulingFunctionBase):
         if not self.mote.dagRoot:
             preferred_parent = self.mote.rpl.getPreferredParent()
             if preferred_parent and self.mote.clear_to_send_EBs_DATA():
+                print(self.Q_table)
                 self.EPISODE = self.EPISODE + 1
                 self.EPSLON = self.MIN_EPSLON + (self.MAX_EPSLON - self.MIN_EPSLON)*np.exp(-self.EPSLON_DECAY_RATE*self.EPISODE)
+
                 print("Mote id {0}".format(self.mote.id))
                 print('----------------------')
                 unused_cell_rate = self.compute_unused_cells_rate()
@@ -246,6 +253,20 @@ class SchedulingFunctionQlearning(SchedulingFunctionBase):
             return cells or autonomous_tx_cell
         else:
             return []
+        
+    #Q-Learning
+    def generate_possible_states(self,num_state_variables):
+        all_states = []
+        for seq in itertools.product("01",repeat=num_state_variables):
+            int_seq = [int(i) for i in seq]
+            tuple_seq = tuple(int_seq)
+            all_states.append(tuple_seq)
+        return all_states
+    
+    def initialize_q_table(self,state_size,action_space_size):
+        all_states = self.generate_possible_states(state_size)
+        for state in all_states:
+            self.Q_table[state] = [0]*action_space_size
 
     #utility methods#
 
