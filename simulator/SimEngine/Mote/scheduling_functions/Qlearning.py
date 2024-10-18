@@ -324,15 +324,6 @@ class SchedulingFunctionQlearning(SchedulingFunctionBase):
             return True
         return False
 
-    # cell manipulation helpers
-    def _lock_cells(self, cell_list):
-        for cell in cell_list:
-            self.locked_slots.add(cell[u'slotOffset'])
-
-    def _unlock_cells(self, cell_list):
-        for cell in cell_list:
-            if cell[u'slotOffset'] in self.locked_slots:
-                self.locked_slots.remove(cell[u'slotOffset'])
     
     def _create_available_cell_list(self, cell_list_len):
         available_slots = self._get_available_slots()

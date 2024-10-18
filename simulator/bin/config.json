@@ -15,7 +15,7 @@
 
             "secjoin_enabled":                             true,
 
-            "app":                                         "AppRandom",
+            "app":                                         "AppPeriodic",
             "app_pkPeriod":                                60,
             "app_pkPeriodVar":                             0.05,
             "app_pkLength":                                90,
@@ -32,7 +32,7 @@
             "fragmentation_ff_vrb_table_size":             50,
             "tsch_max_payload_len":                        90,
 
-            "sf_class":                                    "Qlearning",
+            "sf_class":                                    "MSF",
 
             "tsch_slotDuration":                           0.010,
             "tsch_slotframeLength":                        101,
