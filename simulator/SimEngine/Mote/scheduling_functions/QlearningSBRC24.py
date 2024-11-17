@@ -74,25 +74,23 @@ class SchedulingFunctionQlearningSBRC24(SchedulingFunctionBase):
 
                 print("Mote id {0}".format(self.mote.id))
                 print('----------------------')
-                unused_cell_rate = self.compute_unused_cells_rate()
                 next_state = (
                     int(self.QUEUE_OVERFLOW),
-                    int(self.quantizing_unused_cells_rate(unused_cell_rate))
                 )
                 self.LAMBDA = self.num_packets_in_current_slotframe / slotframe_period_size
-                distribution = self._compute_poisson_packet_distribution(time_interval=slotframe_period_size)
-                num_packets_to_be_generated = self.compute_num_packets_to_be_generated(distribution)
 
-                if num_packets_to_be_generated > 0:
+                random_number = random.uniform(0, 1)
+                if random_number >= 0.2:
                     self.sixp_interface_add(
                         preferred_parent = preferred_parent,
-                        num_cells        = num_packets_to_be_generated,
+                        num_cells        = 1,
                         cell_option      = [d.CELLOPTION_TX],
                     )
                 else:
                     self.sixp_interface_delete(
                         preferred_parent = preferred_parent,
-                        cell_option      = [d.CELLOPTION_TX]
+                        cell_option      = [d.CELLOPTION_TX],
+                        num_cells = 1
                     )
                 self.current_state = next_state
         self.used_cells = []
@@ -268,56 +266,12 @@ class SchedulingFunctionQlearningSBRC24(SchedulingFunctionBase):
         for state in all_states:
             self.Q_table[state] = [0]*action_space_size
 
-    #utility methods#
-
-    def _compute_poisson_packet_distribution(self,time_interval):
-        MAX_NUM_PACKETS = 10
-        distribution = []
-        for i in range(0,MAX_NUM_PACKETS + 1):
-            probability_i = (((self.LAMBDA*time_interval)**i) / fat(i))*(e**-(self.LAMBDA*time_interval))
-            distribution.append(probability_i)
-        return distribution
-    
-    def compute_unused_cells_rate(self):
-        preferred_parent = self.mote.rpl.getPreferredParent()
-        if preferred_parent:
-            unused_cells_tx = self._get_unused_cells([d.CELLOPTION_TX])
-            unused_cells_rx = self._get_unused_cells([d.CELLOPTION_RX])
-            total_unused_cells = len(unused_cells_rx) + len(unused_cells_tx)
-            total_cells = len(self.mote.tsch.get_cells(preferred_parent,self.SLOTFRAME_HANDLE))
-            return float(total_unused_cells)/total_cells
-        return None
-    
-    def quantizing_unused_cells_rate(self,unused_cell_rate):
-        if unused_cell_rate > self.UNUSED_CELL_RATE_MAX_THRESHOLD:
-            return True 
-        return False
-
-    
-    def compute_num_packets_to_be_generated(self,distribution):
-        return distribution.index(max(distribution))
-
     def _get_available_slots(self):
         available_slots = self.mote.tsch.get_available_slots(self.SLOTFRAME_HANDLE)
         if isinstance(available_slots,list):
             return list(set(available_slots) - self.locked_slots)
         return []
     
-    def _get_unused_cells(self,cell_option):
-        preferred_parent = self.mote.rpl.getPreferredParent()
-        available_cells = [
-                        {"channelOffset":cell.channel_offset,
-                            "slotOffset":cell.slot_offset} 
-                        for cell in self.mote.tsch.get_cells(
-                        preferred_parent,
-                        self.SLOTFRAME_HANDLE
-                    )
-                if cell.options == cell_option]
-        unused_cells = []
-        for cell in available_cells:
-            if cell not in self.used_cells:
-                unused_cells.append(cell)
-        return unused_cells
     
     def _is_minimal_cell(self,cell):
         if cell.slot_offset == 0 and cell.channel_offset == 0:
@@ -860,29 +814,37 @@ class SchedulingFunctionQlearningSBRC24(SchedulingFunctionBase):
             callback    = callback
         )
 
-    #num_cells is here only for backward compatibility
     def sixp_interface_delete(
             self,
             preferred_parent,
             cell_option,
+            num_cells,
         ):
 
-        cells_to_delete = self._get_unused_cells(cell_option)
+        available_cells = [
+            {"channelOffset":cell.channel_offset,
+                "slotOffset":cell.slot_offset} 
+            for cell in self.mote.tsch.get_cells(
+            preferred_parent,
+            self.SLOTFRAME_HANDLE
+        ) if cell.options == cell_option]
 
-        if len(cells_to_delete) >= 1:
-            callback = self._create_delete_request_callback(
-                preferred_parent,
-                len(cells_to_delete),
-                cell_option
-            )
-            self.mote.sixp.send_request(
-                dstMac      = preferred_parent,
-                command     = d.SIXP_CMD_DELETE,
-                cellOptions = cell_option,
-                numCells    = len(cells_to_delete),
-                cellList    = cells_to_delete,
-                callback    = callback
-            )
+        if len(available_cells) < num_cells:
+            num_cells = len(available_cells)
+
+        callback = self._create_delete_request_callback(
+            preferred_parent,
+            num_cells,
+            cell_option
+        )
+        self.mote.sixp.send_request(
+            dstMac      = preferred_parent,
+            command     = d.SIXP_CMD_DELETE,
+            cellOptions = cell_option,
+            numCells    = num_cells,
+            cellList    = available_cells,
+            callback    = callback
+        )
 #################################################
     # autonomous cell
     def get_autonomous_rx_cell(self):
