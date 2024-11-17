@@ -27,15 +27,26 @@ class SchedulingFunctionQlearningSBRC24(SchedulingFunctionBase):
     QUEUE_OVERFLOW = False
     UNUSED_CELL_RATE_MAX_THRESHOLD = 0.2
     num_packets_in_current_slotframe = 0
-    current_state = (0,0)
+    current_state = (0,0,0)
     EPSLON = None
     MAX_EPSLON = 1.0           
     MIN_EPSLON = 0.05           
     EPSLON_DECAY_RATE = 0.005  
     EPISODE = 0
     Q_table = dict()
-    STATE_SIZE = 2
+    STATE_SIZE = 3
     ACTION_STATE_SIZE = 3
+    SLOTFRAME_INTERVAL_SIZE = 10
+    remaining_battery = 2821500
+
+    #traffic estimate variables
+    TRAFFIC = 0
+    array_rxs_acks = []
+    prev_rx_ack = 0
+
+    #queue estimate variables
+    AVERAGE_QUEUE_SIZE = 0
+    array_queue_ratio = []
 
 
     
@@ -68,15 +79,26 @@ class SchedulingFunctionQlearningSBRC24(SchedulingFunctionBase):
         if not self.mote.dagRoot:
             preferred_parent = self.mote.rpl.getPreferredParent()
             if preferred_parent and self.mote.clear_to_send_EBs_DATA():
-                print(self.Q_table)
+                
                 self.EPISODE = self.EPISODE + 1
                 self.EPSLON = self.MIN_EPSLON + (self.MAX_EPSLON - self.MIN_EPSLON)*np.exp(-self.EPSLON_DECAY_RATE*self.EPISODE)
 
                 print("Mote id {0}".format(self.mote.id))
                 print('----------------------')
+
+
+                print(self.Q_table)
+
                 next_state = (
-                    int(self.QUEUE_OVERFLOW),
+                    self._compute_traffic(),
+                    self._compute_queue_average_ratio(),
+                    self._compute_charge()
                 )
+                print("Current state")
+                print(self.current_state)
+                print("Next state")
+                print(next_state)
+
                 self.LAMBDA = self.num_packets_in_current_slotframe / slotframe_period_size
 
                 random_number = random.uniform(0, 1)
@@ -272,6 +294,43 @@ class SchedulingFunctionQlearningSBRC24(SchedulingFunctionBase):
             return list(set(available_slots) - self.locked_slots)
         return []
     
+    def _compute_charge(self):
+        charge = 0
+        charge =  self.mote.radio.stats['idle_listen'] * d.CHARGE_IdleListen_uC
+        charge += self.mote.radio.stats['tx_data_rx_ack'] * d.CHARGE_TxDataRxAck_uC
+        charge += self.mote.radio.stats['rx_data_tx_ack'] * d.CHARGE_RxDataTxAck_uC
+        charge += self.mote.radio.stats['tx_data'] * d.CHARGE_TxData_uC
+        charge += self.mote.radio.stats['rx_data'] * d.CHARGE_RxData_uC
+        charge += self.mote.radio.stats['sleep'] * d.CHARGE_Sleep_uC
+        current_asn = self.engine.getAsn()
+        asn_synced = self.mote.tsch.asnLastSync
+        denominator = (float(current_asn-asn_synced) * self.settings.tsch_slotDuration)
+        if denominator != 0:
+            avg_current_uA = charge/(float(current_asn-asn_synced) * self.settings.tsch_slotDuration)
+        else:
+            avg_current_uA = 0
+        if avg_current_uA != 0 and self.remaining_battery >= 0:
+            self.remaining_battery = (self.remaining_battery - avg_current_uA)
+            return self.remaining_battery
+        return 0
+    
+    def _compute_traffic(self):
+        self.array_rxs_acks.append(self.mote.radio.stats["rx_data_tx_ack"] - self.prev_rx_ack)
+        self.prev_rx_ack = self.mote.radio.stats["rx_data_tx_ack"]
+        if len(self.array_rxs_acks) == self.SLOTFRAME_INTERVAL_SIZE:
+            self.TRAFFIC = sum(self.array_rxs_acks)/float(self.SLOTFRAME_INTERVAL_SIZE)
+            self.array_rxs_acks.pop(0)
+        return self.TRAFFIC
+    
+    def _compute_queue_average_ratio(self):
+        self.array_queue_ratio.append(self._compute_queue_ratio())
+        if len(self.array_queue_ratio) == self.SLOTFRAME_INTERVAL_SIZE:
+            self.AVERAGE_QUEUE_SIZE = sum(self.array_queue_ratio)/float(self.SLOTFRAME_INTERVAL_SIZE)
+            self.array_queue_ratio.pop(0)
+        return self.AVERAGE_QUEUE_SIZE
+    
+    def _compute_queue_ratio(self):
+        return len(self.mote.tsch.txQueue)/float(self.settings.tsch_tx_queue_size)
     
     def _is_minimal_cell(self,cell):
         if cell.slot_offset == 0 and cell.channel_offset == 0:
