@@ -20,6 +20,7 @@ import netaddr
 from . import MoteDefines as d
 from SimEngine.Mote.scheduling_functions.MSF import SchedulingFunctionMSF
 from SimEngine.Mote.scheduling_functions.Qlearning import SchedulingFunctionQlearning
+from SimEngine.Mote.scheduling_functions.QlearningSBRC24 import SchedulingFunctionQlearningSBRC24
 
 # Simulator-wide modules
 import SimEngine
@@ -387,7 +388,10 @@ class Tsch(object):
                 reason  = SimEngine.SimLog.DROPREASON_TXQUEUE_FULL
             )
 
-            if (isinstance(self.mote.sf, SchedulingFunctionQlearning)):
+            if (
+                isinstance(self.mote.sf, SchedulingFunctionQlearning) or 
+                isinstance(self.mote.sf, SchedulingFunctionQlearningSBRC24)
+            ):
                 self.mote.sf.indication_queue_full()   
 
             # couldn't enqueue
