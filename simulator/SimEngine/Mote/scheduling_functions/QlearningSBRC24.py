@@ -34,6 +34,7 @@ class SchedulingFunctionQlearningSBRC24(SchedulingFunctionBase):
     EPSLON_DECAY_RATE = 0.005  
     EPISODE = 0
     Q_table = dict()
+    num_states = 8
     STATE_SIZE = 3
     ACTION_STATE_SIZE = 3
     SLOTFRAME_INTERVAL_SIZE = 10
@@ -48,8 +49,11 @@ class SchedulingFunctionQlearningSBRC24(SchedulingFunctionBase):
     AVERAGE_QUEUE_SIZE = 0
     array_queue_ratio = []
 
+    #q-learning parameters
+    ALFA = 0.5
+    BETA = 0.5
 
-    
+
     def __init__(self, mote):
         super(SchedulingFunctionQlearningSBRC24, self).__init__(mote)
         self.locked_slots         = set([])
@@ -85,8 +89,6 @@ class SchedulingFunctionQlearningSBRC24(SchedulingFunctionBase):
 
                 print("Mote id {0}".format(self.mote.id))
                 print('----------------------')
-
-
                 print(self.Q_table)
 
                 next_state = (
@@ -94,32 +96,40 @@ class SchedulingFunctionQlearningSBRC24(SchedulingFunctionBase):
                     self._compute_queue_average_ratio(),
                     self._compute_charge()
                 )
-                print("Current state")
+
                 print(self.current_state)
-                print("Next state")
                 print(next_state)
 
-                self.LAMBDA = self.num_packets_in_current_slotframe / slotframe_period_size
-
                 random_number = random.uniform(0, 1)
-                if random_number >= 0.2:
+                if self.EPSLON < 0.5:
+                    action = self.return_best_q_action(self.map_state_to_number(self.current_state))
+                else:
+                   action = 2
+
+                discrete_variables = self.discretize_variables(self.current_state)
+
+                discrete_traffic = discrete_variables[0]
+                discrete_queue = discrete_variables[1]
+                discrete_energy_left = discrete_variables[2]
+
+                add_cells =  (discrete_queue) + (discrete_traffic) + (discrete_energy_left)  
+                remove_cells =  (1-discrete_queue) + (1-discrete_traffic) + (1-discrete_energy_left)  
+
+                if action == 1:
                     self.sixp_interface_add(
                         preferred_parent = preferred_parent,
-                        num_cells        = 1,
+                        num_cells        = add_cells,
                         cell_option      = [d.CELLOPTION_TX],
                     )
-                else:
+                elif action == 0:
                     self.sixp_interface_delete(
                         preferred_parent = preferred_parent,
                         cell_option      = [d.CELLOPTION_TX],
-                        num_cells = 1
+                        num_cells = remove_cells
                     )
                 self.current_state = next_state
-        self.used_cells = []
-        self.QUEUE_OVERFLOW = False
-        self.num_packets_in_current_slotframe = 0
+                self.compute_q_table(self.current_state,next_state,action)
         
-
     def stop(self):
         self.mote.tsch.delete_slotframe(self.SLOTFRAME_HANDLE)
         self.EPSLON = 0
@@ -274,18 +284,8 @@ class SchedulingFunctionQlearningSBRC24(SchedulingFunctionBase):
         else:
             return []
         
-    #Q-Learning
-    def generate_possible_states(self,num_state_variables):
-        all_states = []
-        for seq in itertools.product("01",repeat=num_state_variables):
-            int_seq = [int(i) for i in seq]
-            tuple_seq = tuple(int_seq)
-            all_states.append(tuple_seq)
-        return all_states
-    
     def initialize_q_table(self,state_size,action_space_size):
-        all_states = self.generate_possible_states(state_size)
-        for state in all_states:
+        for state in range(self.num_states):
             self.Q_table[state] = [0]*action_space_size
 
     def _get_available_slots(self):
@@ -329,6 +329,74 @@ class SchedulingFunctionQlearningSBRC24(SchedulingFunctionBase):
             self.array_queue_ratio.pop(0)
         return self.AVERAGE_QUEUE_SIZE
     
+    def compute_reward(self, list_state_variables):
+
+        state_number = self.map_state_to_number(list_state_variables)
+
+        discrete_state_variables = self.discretize_variables(list_state_variables)
+
+        discrete_traffic = discrete_state_variables[0]
+        discrete_queue = discrete_state_variables[1]
+        discrete_energy_left = discrete_state_variables[2]
+            
+        if state_number == 1:
+            return 3
+        else:
+            return (1-discrete_queue) + (1-discrete_traffic) + (discrete_energy_left)  
+        
+    def discretize_traffic(self,traffic):
+        if traffic <= 0.0683673469388:
+            return 0
+        return 1
+    
+    def compute_discrete_energy_left(self,energy_left):
+        if energy_left >= 500:
+            return 1
+        return 0
+
+    def discretize_queue_ratio(self,queue_ratio):
+        if queue_ratio <= 0.118367346939:
+            return 0
+        return 1
+        
+    def discretize_variables(self, state_list_variables):
+        traffic = state_list_variables[0]
+        queue_ratio = state_list_variables[1]
+        energy_left = state_list_variables[2]
+        discrete_traffic = self.discretize_traffic(traffic)
+        discrete_queue_ratio = self.discretize_queue_ratio(queue_ratio)
+        discrete_energy_left = self.compute_discrete_energy_left(energy_left)
+        return [
+            discrete_traffic,
+            discrete_queue_ratio,
+            discrete_energy_left
+        ]
+
+    def map_state_to_number(self, list_state_variables):
+        discrete_state_variables = self.discretize_variables(list_state_variables)
+        discrete_traffic = discrete_state_variables[0]
+        discrete_queue_ratio = discrete_state_variables[1]
+        discrete_energy_left = discrete_state_variables[2]
+        binary_number = str(discrete_traffic) + str(discrete_queue_ratio) + str(discrete_energy_left)
+        return int(binary_number,2)
+    
+    def return_best_q_value(self,state):
+       current_vector = self.Q_table[state]
+       return np.max(current_vector)
+    
+    def return_best_q_action(self,state):
+        current_vector = self.Q_table[state]
+        return np.argmax(current_vector)
+    
+    def compute_q_table(self,list_state_variables,list_next_state_variables,action):
+        curr_state = self.map_state_to_number(list_state_variables)
+        next_state = self.map_state_to_number(list_next_state_variables)
+        #compute deltaQ
+        reward = self.compute_reward(list_state_variables)
+        deltaQ = reward + self.BETA * self.return_best_q_value(next_state)
+        #compute Q_table[curr_state][action]
+        self.Q_table[curr_state][action] = (1 - self.ALFA) * self.Q_table[curr_state][action] + (self.ALFA * deltaQ)
+    
     def _compute_queue_ratio(self):
         return len(self.mote.tsch.txQueue)/float(self.settings.tsch_tx_queue_size)
     
@@ -337,7 +405,6 @@ class SchedulingFunctionQlearningSBRC24(SchedulingFunctionBase):
             return True
         return False
 
-    
     def _create_available_cell_list(self, cell_list_len):
         available_slots = self._get_available_slots()
         # remove slot offset 0 that is reserved for the minimal shared

@@ -9,7 +9,7 @@
             "exec_numMotes":                               [50]
         },
         "regular": {
-            "exec_numSlotframesPerRun":                    1000,
+            "exec_numSlotframesPerRun":                    3750,
             "exec_minutesPerRun":                          null,
             "exec_randomSeed":                             "random",
 
@@ -40,8 +40,8 @@
             "tsch_clock_max_drift_ppm":                    30,
             "tsch_clock_frequency":                        32768,
             "tsch_keep_alive_interval":                    10,
-            "tsch_tx_queue_size":                          10,
-            "tsch_max_tx_retries":                         5,
+            "tsch_tx_queue_size":                          5,
+            "tsch_max_tx_retries":                         4,
 
 
             "radio_stats_log_period_s":                    60,

@@ -36,7 +36,7 @@ class DiscreteEventEngine(threading.Thread):
     #===== start singleton
     _instance      = None
     _init          = False
-    SLOTFRAME_PERIOD_SIZE = 5
+    SLOTFRAME_PERIOD_SIZE = 1
 
     def __new__(cls, *args, **kwargs):
         if not cls._instance:
