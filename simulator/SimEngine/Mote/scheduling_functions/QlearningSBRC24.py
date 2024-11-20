@@ -27,31 +27,39 @@ class SchedulingFunctionQlearningSBRC24(SchedulingFunctionBase):
     QUEUE_OVERFLOW = False
     UNUSED_CELL_RATE_MAX_THRESHOLD = 0.2
     num_packets_in_current_slotframe = 0
+
+    #Q-learning
     current_state = (0,0,0)
     EPSLON = None
     MAX_EPSLON = 1.0           
     MIN_EPSLON = 0.05           
-    EPSLON_DECAY_RATE = 0.005  
+    EPSLON_DECAY_RATE = 0.1
     EPISODE = 0
     Q_table = dict()
     num_states = 8
     STATE_SIZE = 3
     ACTION_STATE_SIZE = 3
-    SLOTFRAME_INTERVAL_SIZE = 10
+    SLOTFRAME_INTERVAL_SIZE = 3
     remaining_battery = 2821500
+    cumulative_reward = 0
+    tx_cells_passed = 0
+    rx_cells_passed = 0
 
     #traffic estimate variables
     TRAFFIC = 0
     array_rxs_acks = []
     prev_rx_ack = 0
 
+    #charge estimate variables
+    prev_slotframe_charge = 0
+
     #queue estimate variables
     AVERAGE_QUEUE_SIZE = 0
     array_queue_ratio = []
 
     #q-learning parameters
-    ALFA = 0.5
-    BETA = 0.5
+    ALFA = 0.9
+    BETA = 0.2
 
 
     def __init__(self, mote):
@@ -80,6 +88,30 @@ class SchedulingFunctionQlearningSBRC24(SchedulingFunctionBase):
     #indicates the ending of a window of X slotframes
     #X = SimEngine.SLOTFRAME_PERIOD_SIZE
     def indication_slotframe_window_ending(self,slotframe_period_size):
+        pass
+        
+    def stop(self):
+        self.mote.tsch.delete_slotframe(self.SLOTFRAME_HANDLE)
+        self.EPSLON = self.MIN_EPSLON
+        self.EPISODE = 0
+
+    def indication_neighbor_added(self, neighbor_mac_addr):
+        pass # do nothing
+
+    def indication_tx_cell_elapsed(self, cell, sent_packet):
+        if bool(sent_packet):
+            self.tx_cells_passed = self.tx_cells_passed + 1
+        if self.tx_cells_passed % 100 == 0:
+            self.adapt_to_traffic([d.CELLOPTION_TX])
+            self.tx_cells_passed = 0
+    def indication_rx_cell_elapsed(self, cell, received_packet):
+        if bool(received_packet):
+            self.rx_cells_passed = self.rx_cells_passed + 1
+        if self.rx_cells_passed % 100 == 0:
+            self.adapt_to_traffic([d.CELLOPTION_RX])
+            self.rx_cells_passed = 0
+
+    def adapt_to_traffic(self, cellopt):
         if not self.mote.dagRoot:
             preferred_parent = self.mote.rpl.getPreferredParent()
             if preferred_parent and self.mote.clear_to_send_EBs_DATA():
@@ -97,16 +129,14 @@ class SchedulingFunctionQlearningSBRC24(SchedulingFunctionBase):
                     self._compute_charge()
                 )
 
-                print(self.current_state)
-                print(next_state)
-
-                random_number = random.uniform(0, 1)
-                if self.EPSLON < 0.5:
+                if self.EPSLON < 0.85:
                     action = self.return_best_q_action(self.map_state_to_number(self.current_state))
                 else:
-                   action = 2
+                    action = random.choice([0,1,2])
 
                 discrete_variables = self.discretize_variables(self.current_state)
+
+                print(discrete_variables)
 
                 discrete_traffic = discrete_variables[0]
                 discrete_queue = discrete_variables[1]
@@ -115,42 +145,27 @@ class SchedulingFunctionQlearningSBRC24(SchedulingFunctionBase):
                 add_cells =  (discrete_queue) + (discrete_traffic) + (discrete_energy_left)  
                 remove_cells =  (1-discrete_queue) + (1-discrete_traffic) + (1-discrete_energy_left)  
 
-                if action == 1:
+                print('EPSLON')
+                print(self.EPSLON)
+                print('action')
+                print(action)
+
+                if action == 0:
                     self.sixp_interface_add(
                         preferred_parent = preferred_parent,
-                        num_cells        = add_cells,
-                        cell_option      = [d.CELLOPTION_TX],
+                        num_cells        = 1,
+                        cell_option      = cellopt,
                     )
-                elif action == 0:
+                elif action == 1:
                     self.sixp_interface_delete(
                         preferred_parent = preferred_parent,
-                        cell_option      = [d.CELLOPTION_TX],
-                        num_cells = remove_cells
+                        cell_option      = cellopt,
+                        num_cells        = 1
                     )
+                
+
                 self.current_state = next_state
                 self.compute_q_table(self.current_state,next_state,action)
-        
-    def stop(self):
-        self.mote.tsch.delete_slotframe(self.SLOTFRAME_HANDLE)
-        self.EPSLON = 0
-        self.EPISODE = 0
-
-    def indication_neighbor_added(self, neighbor_mac_addr):
-        pass # do nothing
-
-    def indication_tx_cell_elapsed(self, cell, sent_packet):
-        if not self._is_minimal_cell(cell):
-            self.num_packets_in_current_slotframe = self.num_packets_in_current_slotframe + 1
-            position = {'channelOffset': cell.slot_offset, 'slotOffset': cell.channel_offset}
-            if position not in self.used_cells:
-                self.used_cells.append(position)
-
-    def indication_rx_cell_elapsed(self, cell, received_packet):
-        if not self._is_minimal_cell(cell):
-            self.num_packets_in_current_slotframe = self.num_packets_in_current_slotframe + 1
-            position = {'channelOffset': cell.slot_offset, 'slotOffset': cell.channel_offset}
-            if position not in self.used_cells:
-                self.used_cells.append(position)
 
     def indication_queue_full(self):
         self.QUEUE_OVERFLOW = True
@@ -294,6 +309,22 @@ class SchedulingFunctionQlearningSBRC24(SchedulingFunctionBase):
             return list(set(available_slots) - self.locked_slots)
         return []
     
+    def _get_unused_cells(self,cell_option):
+        preferred_parent = self.mote.rpl.getPreferredParent()
+        available_cells = [
+                        {"channelOffset":cell.channel_offset,
+                            "slotOffset":cell.slot_offset} 
+                        for cell in self.mote.tsch.get_cells(
+                        preferred_parent,
+                        self.SLOTFRAME_HANDLE
+                    )
+                if cell.options == cell_option]
+        unused_cells = []
+        for cell in available_cells:
+            if cell not in self.used_cells:
+                unused_cells.append(cell)
+        return unused_cells
+    
     def _compute_charge(self):
         charge = 0
         charge =  self.mote.radio.stats['idle_listen'] * d.CHARGE_IdleListen_uC
@@ -317,47 +348,96 @@ class SchedulingFunctionQlearningSBRC24(SchedulingFunctionBase):
     def _compute_traffic(self):
         self.array_rxs_acks.append(self.mote.radio.stats["rx_data_tx_ack"] - self.prev_rx_ack)
         self.prev_rx_ack = self.mote.radio.stats["rx_data_tx_ack"]
-        if len(self.array_rxs_acks) == self.SLOTFRAME_INTERVAL_SIZE:
-            self.TRAFFIC = sum(self.array_rxs_acks)/float(self.SLOTFRAME_INTERVAL_SIZE)
+        if len(self.array_rxs_acks) == self.SLOTFRAME_INTERVAL_SIZE + 1:
+            self.TRAFFIC = sum(
+                self.array_rxs_acks[:self.SLOTFRAME_INTERVAL_SIZE])/float(self.SLOTFRAME_INTERVAL_SIZE)
             self.array_rxs_acks.pop(0)
         return self.TRAFFIC
     
     def _compute_queue_average_ratio(self):
         self.array_queue_ratio.append(self._compute_queue_ratio())
-        if len(self.array_queue_ratio) == self.SLOTFRAME_INTERVAL_SIZE:
-            self.AVERAGE_QUEUE_SIZE = sum(self.array_queue_ratio)/float(self.SLOTFRAME_INTERVAL_SIZE)
+        if len(self.array_queue_ratio) == self.SLOTFRAME_INTERVAL_SIZE + 1:
+            self.AVERAGE_QUEUE_SIZE = sum(
+                self.array_queue_ratio[:self.SLOTFRAME_INTERVAL_SIZE])/float(self.SLOTFRAME_INTERVAL_SIZE)
             self.array_queue_ratio.pop(0)
         return self.AVERAGE_QUEUE_SIZE
     
-    def compute_reward(self, list_state_variables):
+    def compute_reward(self, list_state_variables, action):
 
         state_number = self.map_state_to_number(list_state_variables)
 
-        discrete_state_variables = self.discretize_variables(list_state_variables)
-
-        discrete_traffic = discrete_state_variables[0]
-        discrete_queue = discrete_state_variables[1]
-        discrete_energy_left = discrete_state_variables[2]
-            
-        if state_number == 1:
-            return 3
-        else:
-            return (1-discrete_queue) + (1-discrete_traffic) + (discrete_energy_left)  
-        
-    def discretize_traffic(self,traffic):
-        if traffic <= 0.0683673469388:
+        if state_number == 0 and action == 0:
+            return -1
+        elif state_number == 0 and action == 1:
+            return 1
+        elif state_number == 0 and action == 2:
             return 0
-        return 1
+        
+        if state_number == 1 and action == 0:
+            return -1
+        elif state_number == 1 and action == 1:
+            return 0
+        elif state_number == 1 and action == 2:
+            return 1
+        
+        if state_number == 2 and action == 0:
+            return 0
+        elif state_number == 2 and action == 1:
+            return 1
+        elif state_number == 2 and action == 2:
+            return 0
+        
+        if state_number == 3 and action == 0:
+            return 1
+        elif state_number == 3 and action == 1:
+            return -1
+        elif state_number == 3 and action == 2:
+            return -1
+        
+        if state_number == 4 and action == 0:
+            return 0
+        elif state_number == 4 and action == 1:
+            return -1
+        elif state_number == 4 and action == 2:
+            return 1
+        
+        if state_number == 5 and action == 0:
+            return 1
+        elif state_number == 5 and action == 1:
+            return -1
+        elif state_number == 5 and action == 2:
+            return 0
+        
+        if state_number == 6 and action == 0:
+            return 1
+        elif state_number == 6 and action == 1:
+            return 1
+        elif state_number == 6 and action == 2:
+            return 0
+        
+        if state_number == 7 and action == 0:
+            return 1
+        elif state_number == 7 and action == 1:
+            return -1
+        elif state_number == 7 and action == 2:
+            return 0
+        
+    def discretize_queue_ratio(self,queue_ratio):
+        average_queue_ratio = self._compute_queue_average_ratio()
+        if queue_ratio > average_queue_ratio:
+            return 1
+        return 0
     
     def compute_discrete_energy_left(self,energy_left):
-        if energy_left >= 500:
+        if energy_left >= self.remaining_battery / 2:
             return 1
         return 0
 
-    def discretize_queue_ratio(self,queue_ratio):
-        if queue_ratio <= 0.118367346939:
-            return 0
-        return 1
+    def discretize_traffic(self,traffic):
+        average_traffic = self._compute_traffic()
+        if traffic >= average_traffic:
+            return 1
+        return 0
         
     def discretize_variables(self, state_list_variables):
         traffic = state_list_variables[0]
@@ -392,7 +472,10 @@ class SchedulingFunctionQlearningSBRC24(SchedulingFunctionBase):
         curr_state = self.map_state_to_number(list_state_variables)
         next_state = self.map_state_to_number(list_next_state_variables)
         #compute deltaQ
-        reward = self.compute_reward(list_state_variables)
+        reward = self.compute_reward(list_state_variables, action)
+        self.cumulative_reward = self.cumulative_reward + reward
+        print('cumulative reward')
+        print(self.cumulative_reward)
         deltaQ = reward + self.BETA * self.return_best_q_value(next_state)
         #compute Q_table[curr_state][action]
         self.Q_table[curr_state][action] = (1 - self.ALFA) * self.Q_table[curr_state][action] + (self.ALFA * deltaQ)
@@ -940,37 +1023,30 @@ class SchedulingFunctionQlearningSBRC24(SchedulingFunctionBase):
             callback    = callback
         )
 
+    #num_cells is here only for backward compatibility
     def sixp_interface_delete(
             self,
             preferred_parent,
             cell_option,
-            num_cells,
+            num_cells
         ):
 
-        available_cells = [
-            {"channelOffset":cell.channel_offset,
-                "slotOffset":cell.slot_offset} 
-            for cell in self.mote.tsch.get_cells(
-            preferred_parent,
-            self.SLOTFRAME_HANDLE
-        ) if cell.options == cell_option]
+        cells_to_delete = self._get_unused_cells(cell_option)
 
-        if len(available_cells) < num_cells:
-            num_cells = len(available_cells)
-
-        callback = self._create_delete_request_callback(
-            preferred_parent,
-            num_cells,
-            cell_option
-        )
-        self.mote.sixp.send_request(
-            dstMac      = preferred_parent,
-            command     = d.SIXP_CMD_DELETE,
-            cellOptions = cell_option,
-            numCells    = num_cells,
-            cellList    = available_cells,
-            callback    = callback
-        )
+        if len(cells_to_delete) >= 1:
+            callback = self._create_delete_request_callback(
+                preferred_parent,
+                len(cells_to_delete),
+                cell_option
+            )
+            self.mote.sixp.send_request(
+                dstMac      = preferred_parent,
+                command     = d.SIXP_CMD_DELETE,
+                cellOptions = cell_option,
+                numCells    = num_cells,
+                cellList    = cells_to_delete,
+                callback    = callback
+            )
 #################################################
     # autonomous cell
     def get_autonomous_rx_cell(self):
