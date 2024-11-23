@@ -4,10 +4,8 @@ from __future__ import absolute_import
 import random
 import SimEngine
 import netaddr
-import itertools
 import numpy as np
 from .. import MoteDefines as d
-from math import factorial as fat
 from math import e
 
 from SimEngine.Mote.sfBase import SchedulingFunctionBase
@@ -23,27 +21,36 @@ class SchedulingFunctionQlearningSBRC24(SchedulingFunctionBase):
     NUM_INITIAL_NEGOTIATED_TX_CELLS = 1
     NUM_INITIAL_NEGOTIATED_RX_CELLS = 0
     used_cells = []
-    LAMBDA = 0
     QUEUE_OVERFLOW = False
-    UNUSED_CELL_RATE_MAX_THRESHOLD = 0.2
-    num_packets_in_current_slotframe = 0
 
     #Q-learning
     current_state = (0,0,0)
     EPSLON = None
     MAX_EPSLON = 1.0           
     MIN_EPSLON = 0.05           
-    EPSLON_DECAY_RATE = 0.1
+    EPSLON_DECAY_RATE = 0.01
     EPISODE = 0
     Q_table = dict()
     num_states = 8
     STATE_SIZE = 3
     ACTION_STATE_SIZE = 3
     SLOTFRAME_INTERVAL_SIZE = 3
-    remaining_battery = 2821500
     cumulative_reward = 0
-    tx_cells_passed = 0
-    rx_cells_passed = 0
+    TX_CELLS_PASSED = 0
+    RX_CELLS_PASSED = 0
+    ALFA = 0.9
+    BETA = 0.2
+
+    reward_table = {
+        (0, 0): -1, (0, 1): 1, (0, 2): 0,
+        (1, 0): -1, (1, 1): 0, (1, 2): 1,
+        (2, 0):  0, (2, 1): 1, (2, 2): 0,
+        (3, 0):  1, (3, 1): -1, (3, 2): -1,
+        (4, 0):  0, (4, 1): -1, (4, 2): 1,
+        (5, 0):  1, (5, 1): -1, (5, 2): 0,
+        (6, 0):  1, (6, 1):  1, (6, 2): 0,
+        (7, 0):  1, (7, 1): -1, (7, 2): 0,
+    }
 
     #traffic estimate variables
     TRAFFIC = 0
@@ -51,15 +58,11 @@ class SchedulingFunctionQlearningSBRC24(SchedulingFunctionBase):
     prev_rx_ack = 0
 
     #charge estimate variables
-    prev_slotframe_charge = 0
+    remaining_battery = 2821500
 
     #queue estimate variables
     AVERAGE_QUEUE_SIZE = 0
     array_queue_ratio = []
-
-    #q-learning parameters
-    ALFA = 0.9
-    BETA = 0.2
 
 
     def __init__(self, mote):
@@ -100,16 +103,16 @@ class SchedulingFunctionQlearningSBRC24(SchedulingFunctionBase):
 
     def indication_tx_cell_elapsed(self, cell, sent_packet):
         if bool(sent_packet):
-            self.tx_cells_passed = self.tx_cells_passed + 1
-        if self.tx_cells_passed % 100 == 0:
+            self.TX_CELLS_PASSED = self.TX_CELLS_PASSED + 1
+        if self.TX_CELLS_PASSED % 100 == 0:
             self.adapt_to_traffic([d.CELLOPTION_TX])
-            self.tx_cells_passed = 0
+            self.TX_CELLS_PASSED = 0
     def indication_rx_cell_elapsed(self, cell, received_packet):
         if bool(received_packet):
-            self.rx_cells_passed = self.rx_cells_passed + 1
-        if self.rx_cells_passed % 100 == 0:
+            self.RX_CELLS_PASSED = self.RX_CELLS_PASSED + 1
+        if self.RX_CELLS_PASSED % 100 == 0:
             self.adapt_to_traffic([d.CELLOPTION_RX])
-            self.rx_cells_passed = 0
+            self.RX_CELLS_PASSED = 0
 
     def adapt_to_traffic(self, cellopt):
         if not self.mote.dagRoot:
@@ -136,8 +139,6 @@ class SchedulingFunctionQlearningSBRC24(SchedulingFunctionBase):
 
                 discrete_variables = self.discretize_variables(self.current_state)
 
-                print(discrete_variables)
-
                 discrete_traffic = discrete_variables[0]
                 discrete_queue = discrete_variables[1]
                 discrete_energy_left = discrete_variables[2]
@@ -153,14 +154,14 @@ class SchedulingFunctionQlearningSBRC24(SchedulingFunctionBase):
                 if action == 0:
                     self.sixp_interface_add(
                         preferred_parent = preferred_parent,
-                        num_cells        = 1,
+                        num_cells        = add_cells,
                         cell_option      = cellopt,
                     )
                 elif action == 1:
                     self.sixp_interface_delete(
                         preferred_parent = preferred_parent,
-                        cell_option      = cellopt,
-                        num_cells        = 1
+                        num_cells        = remove_cells,
+                        cell_option      = cellopt
                     )
                 
 
@@ -362,65 +363,10 @@ class SchedulingFunctionQlearningSBRC24(SchedulingFunctionBase):
             self.array_queue_ratio.pop(0)
         return self.AVERAGE_QUEUE_SIZE
     
-    def compute_reward(self, list_state_variables, action):
 
+    def compute_reward(self,list_state_variables, action):
         state_number = self.map_state_to_number(list_state_variables)
-
-        if state_number == 0 and action == 0:
-            return -1
-        elif state_number == 0 and action == 1:
-            return 1
-        elif state_number == 0 and action == 2:
-            return 0
-        
-        if state_number == 1 and action == 0:
-            return -1
-        elif state_number == 1 and action == 1:
-            return 0
-        elif state_number == 1 and action == 2:
-            return 1
-        
-        if state_number == 2 and action == 0:
-            return 0
-        elif state_number == 2 and action == 1:
-            return 1
-        elif state_number == 2 and action == 2:
-            return 0
-        
-        if state_number == 3 and action == 0:
-            return 1
-        elif state_number == 3 and action == 1:
-            return -1
-        elif state_number == 3 and action == 2:
-            return -1
-        
-        if state_number == 4 and action == 0:
-            return 0
-        elif state_number == 4 and action == 1:
-            return -1
-        elif state_number == 4 and action == 2:
-            return 1
-        
-        if state_number == 5 and action == 0:
-            return 1
-        elif state_number == 5 and action == 1:
-            return -1
-        elif state_number == 5 and action == 2:
-            return 0
-        
-        if state_number == 6 and action == 0:
-            return 1
-        elif state_number == 6 and action == 1:
-            return 1
-        elif state_number == 6 and action == 2:
-            return 0
-        
-        if state_number == 7 and action == 0:
-            return 1
-        elif state_number == 7 and action == 1:
-            return -1
-        elif state_number == 7 and action == 2:
-            return 0
+        return self.reward_table.get((state_number, action), 0)  
         
     def discretize_queue_ratio(self,queue_ratio):
         average_queue_ratio = self._compute_queue_average_ratio()
@@ -473,9 +419,6 @@ class SchedulingFunctionQlearningSBRC24(SchedulingFunctionBase):
         next_state = self.map_state_to_number(list_next_state_variables)
         #compute deltaQ
         reward = self.compute_reward(list_state_variables, action)
-        self.cumulative_reward = self.cumulative_reward + reward
-        print('cumulative reward')
-        print(self.cumulative_reward)
         deltaQ = reward + self.BETA * self.return_best_q_value(next_state)
         #compute Q_table[curr_state][action]
         self.Q_table[curr_state][action] = (1 - self.ALFA) * self.Q_table[curr_state][action] + (self.ALFA * deltaQ)
