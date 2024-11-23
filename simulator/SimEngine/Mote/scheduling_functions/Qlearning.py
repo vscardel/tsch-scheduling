@@ -34,7 +34,7 @@ class SchedulingFunctionQlearning(SchedulingFunctionBase):
     EPSLON = None
     MAX_EPSLON = 1.0           
     MIN_EPSLON = 0.05           
-    EPSLON_DECAY_RATE = 0.01
+    EPSLON_DECAY_RATE = 0.1
     EPISODE = 0
     Q_table = dict()
     num_states = 8
@@ -119,8 +119,9 @@ class SchedulingFunctionQlearning(SchedulingFunctionBase):
                 )
 
                 self.LAMBDA = self.num_packets_in_current_slotframe / self.SLOTFRAME_INTERVAL_SIZE
+              
+              
                 distribution = self._compute_poisson_packet_distribution(time_interval=self.SLOTFRAME_INTERVAL_SIZE)
-                num_packets_to_be_generated = self.compute_num_packets_to_be_generated(distribution)
 
                 if self.EPSLON < 0.85:
                     action = self.return_best_q_action(self.map_state_to_number(self.current_state))
@@ -133,15 +134,17 @@ class SchedulingFunctionQlearning(SchedulingFunctionBase):
                 print(action)
 
                 if action == 0:
+                    num_packets_to_be_generated = self.compute_num_packets_to_be_generated(distribution)
                     self.sixp_interface_add(
                         preferred_parent = preferred_parent,
                         num_cells        = num_packets_to_be_generated,
                         cell_option      = cellopt,
                     )
                 elif action == 1:
+                    num_packets_to_remove = self.compute_num_packets_to_remove(self.LAMBDA, cellopt)
                     self.sixp_interface_delete(
                         preferred_parent = preferred_parent,
-                        num_cells        = 1,
+                        num_cells        = num_packets_to_remove,
                         cell_option      = cellopt
                     )
                 
@@ -348,6 +351,13 @@ class SchedulingFunctionQlearning(SchedulingFunctionBase):
     
     def compute_num_packets_to_be_generated(self,distribution):
         return distribution.index(max(distribution))
+    
+    def compute_num_packets_to_remove(self,LAMBDA,cell_option):
+        preferred_parent = self.mote.rpl.getPreferredParent()
+        allocated_cells = [cell for cell in self.mote.tsch.get_cells(preferred_parent, self.SLOTFRAME_HANDLE) 
+                           if cell.options == cell_option]
+        num_cells_to_remove = max(1,len(allocated_cells) - LAMBDA)
+        return num_cells_to_remove
 
     def _get_available_slots(self):
         available_slots = self.mote.tsch.get_available_slots(self.SLOTFRAME_HANDLE)
@@ -1020,6 +1030,8 @@ class SchedulingFunctionQlearning(SchedulingFunctionBase):
         ):
 
         cells_to_delete = self._get_unused_cells(cell_option)
+        if num_cells > len(cells_to_delete):
+            num_cells = 1
 
         if len(cells_to_delete) >= 1:
             callback = self._create_delete_request_callback(
