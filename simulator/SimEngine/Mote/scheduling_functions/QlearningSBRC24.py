@@ -1,0 +1,1101 @@
+from __future__ import absolute_import
+# =========================== imports =========================================
+
+import random
+import SimEngine
+import netaddr
+import numpy as np
+from .. import MoteDefines as d
+from math import e
+
+from SimEngine.Mote.sfBase import SchedulingFunctionBase
+
+
+class SchedulingFunctionQlearningSBRC24(SchedulingFunctionBase):
+
+    SLOTFRAME_HANDLE = 1
+    DEFAULT_CELL_LIST_LEN = 5
+    MAX_RETRY = 3
+    TX_CELL_OPT   = [d.CELLOPTION_TX]
+    RX_CELL_OPT   = [d.CELLOPTION_RX]
+    NUM_INITIAL_NEGOTIATED_TX_CELLS = 1
+    NUM_INITIAL_NEGOTIATED_RX_CELLS = 0
+    used_cells = []
+    QUEUE_OVERFLOW = False
+
+    #Q-learning
+    current_state = (0,0,0)
+    EPSLON = None
+    MAX_EPSLON = 1.0           
+    MIN_EPSLON = 0.05           
+    EPSLON_DECAY_RATE = 0.01
+    EPISODE = 0
+    Q_table = dict()
+    num_states = 8
+    STATE_SIZE = 3
+    ACTION_STATE_SIZE = 3
+    SLOTFRAME_INTERVAL_SIZE = 3
+    cumulative_reward = 0
+    TX_CELLS_PASSED = 0
+    RX_CELLS_PASSED = 0
+    ALFA = 0.9
+    BETA = 0.2
+
+    reward_table = {
+        (0, 0): -1, (0, 1): 1, (0, 2): 0,
+        (1, 0): -1, (1, 1): 0, (1, 2): 1,
+        (2, 0):  0, (2, 1): 1, (2, 2): 0,
+        (3, 0):  1, (3, 1): -1, (3, 2): -1,
+        (4, 0):  0, (4, 1): -1, (4, 2): 1,
+        (5, 0):  1, (5, 1): -1, (5, 2): 0,
+        (6, 0):  1, (6, 1):  1, (6, 2): 0,
+        (7, 0):  1, (7, 1): -1, (7, 2): 0,
+    }
+
+    #traffic estimate variables
+    TRAFFIC = 0
+    array_rxs_acks = []
+    prev_rx_ack = 0
+
+    #charge estimate variables
+    remaining_battery = 2821500
+
+    #queue estimate variables
+    AVERAGE_QUEUE_SIZE = 0
+    array_queue_ratio = []
+
+
+    def __init__(self, mote):
+        super(SchedulingFunctionQlearningSBRC24, self).__init__(mote)
+        self.locked_slots         = set([])
+        self.retry_count          = {}
+        
+
+    def start(self):
+        slotframe_0 = self.mote.tsch.get_slotframe(0)
+        self.mote.tsch.add_slotframe(
+            slotframe_handle = self.SLOTFRAME_HANDLE,
+            length           = slotframe_0.length
+        )
+
+        self.allocate_autonomous_rx_cell()
+
+        if self.mote.dagRoot:
+            # do nothing
+            pass
+        else:
+            self.allocate_autonomous_rx_cell()
+            self.initialize_q_table(self.STATE_SIZE,self.ACTION_STATE_SIZE)
+
+
+    #indicates the ending of a window of X slotframes
+    #X = SimEngine.SLOTFRAME_PERIOD_SIZE
+    def indication_slotframe_window_ending(self,slotframe_period_size):
+        pass
+        
+    def stop(self):
+        self.mote.tsch.delete_slotframe(self.SLOTFRAME_HANDLE)
+        self.EPSLON = self.MIN_EPSLON
+        self.EPISODE = 0
+
+    def indication_neighbor_added(self, neighbor_mac_addr):
+        pass # do nothing
+
+    def indication_tx_cell_elapsed(self, cell, sent_packet):
+        if bool(sent_packet):
+            self.TX_CELLS_PASSED = self.TX_CELLS_PASSED + 1
+        if self.TX_CELLS_PASSED % 100 == 0:
+            self.adapt_to_traffic([d.CELLOPTION_TX])
+            self.TX_CELLS_PASSED = 0
+    def indication_rx_cell_elapsed(self, cell, received_packet):
+        if bool(received_packet):
+            self.RX_CELLS_PASSED = self.RX_CELLS_PASSED + 1
+        if self.RX_CELLS_PASSED % 100 == 0:
+            self.adapt_to_traffic([d.CELLOPTION_RX])
+            self.RX_CELLS_PASSED = 0
+
+    def adapt_to_traffic(self, cellopt):
+        if not self.mote.dagRoot:
+            preferred_parent = self.mote.rpl.getPreferredParent()
+            if preferred_parent and self.mote.clear_to_send_EBs_DATA():
+                
+                self.EPISODE = self.EPISODE + 1
+                self.EPSLON = self.MIN_EPSLON + (self.MAX_EPSLON - self.MIN_EPSLON)*np.exp(-self.EPSLON_DECAY_RATE*self.EPISODE)
+
+                print("Mote id {0}".format(self.mote.id))
+                print('----------------------')
+                print(self.Q_table)
+
+                next_state = (
+                    self._compute_traffic(),
+                    self._compute_queue_average_ratio(),
+                    self._compute_charge()
+                )
+
+                if self.EPSLON < 0.85:
+                    action = self.return_best_q_action(self.map_state_to_number(self.current_state))
+                else:
+                    action = random.choice([0,1,2])
+
+                discrete_variables = self.discretize_variables(self.current_state)
+
+                discrete_traffic = discrete_variables[0]
+                discrete_queue = discrete_variables[1]
+                discrete_energy_left = discrete_variables[2]
+
+                add_cells =  (discrete_queue) + (discrete_traffic) + (discrete_energy_left)  
+                remove_cells =  (1-discrete_queue) + (1-discrete_traffic) + (1-discrete_energy_left)  
+
+                print('EPSLON')
+                print(self.EPSLON)
+                print('action')
+                print(action)
+
+                if action == 0:
+                    self.sixp_interface_add(
+                        preferred_parent = preferred_parent,
+                        num_cells        = add_cells,
+                        cell_option      = cellopt,
+                    )
+                elif action == 1:
+                    self.sixp_interface_delete(
+                        preferred_parent = preferred_parent,
+                        num_cells        = remove_cells,
+                        cell_option      = cellopt
+                    )
+                
+
+                self.current_state = next_state
+                self.compute_q_table(self.current_state,next_state,action)
+
+    def indication_queue_full(self):
+        self.QUEUE_OVERFLOW = True
+
+    def indication_parent_change(self, old_parent, new_parent):
+        assert old_parent != new_parent
+
+        # allocate the same number of cells to the new parent as it has for the
+        # old parent; note that there could be three types of cells:
+        # (TX=1,RX=1,SHARED=1), (TX=1), and (RX=1)
+        if old_parent is None:
+            num_tx_cells = self.NUM_INITIAL_NEGOTIATED_TX_CELLS
+            num_rx_cells = self.NUM_INITIAL_NEGOTIATED_RX_CELLS
+        else:
+            dedicated_cells = self.mote.tsch.get_cells(
+                mac_addr         = old_parent,
+                slotframe_handle = self.SLOTFRAME_HANDLE
+            )
+            num_tx_cells = len(
+                [cell for cell in dedicated_cells if cell.options == [d.CELLOPTION_TX]]
+            )
+            if num_tx_cells < self.NUM_INITIAL_NEGOTIATED_TX_CELLS:
+                num_tx_cells = self.NUM_INITIAL_NEGOTIATED_TX_CELLS
+            num_rx_cells = len(
+                [cell for cell in dedicated_cells if cell.options == [d.CELLOPTION_RX]]
+            )
+            if num_rx_cells < self.NUM_INITIAL_NEGOTIATED_RX_CELLS:
+                num_rx_cells = self.NUM_INITIAL_NEGOTIATED_RX_CELLS
+        if new_parent:
+            # reset the retry counter
+            # we may better to make sure there is no outstanding
+            # transaction with the same peer
+            self.retry_count[new_parent] = 0
+            cell_list = self._create_available_cell_list(self.DEFAULT_CELL_LIST_LEN)
+            self._request_adding_cells(
+                parent         = new_parent,
+                cell_type      = [d.CELLOPTION_TX],
+                num_cells      = num_tx_cells,
+                cell_list      = cell_list
+            )
+            cell_list = self._create_available_cell_list(self.DEFAULT_CELL_LIST_LEN)
+            self._request_adding_cells(
+                parent         = new_parent,
+                cell_type      = [d.CELLOPTION_RX],
+                num_cells      = num_rx_cells,
+                cell_list      = cell_list
+            )
+
+        # clear all the cells allocated for the old parent
+        def _callback(event, packet):
+            if event == d.SIXP_CALLBACK_EVENT_FAILURE:
+                # optimization which is not mentioned in 6P/MSF spec: remove
+                # the outstanding transaction because we're deleting all the
+                # cells scheduled to the peer now. The outstanding transaction
+                # should have the same transaction key as the packet we were
+                # trying to send.
+                self.mote.sixp.abort_transaction(
+                    initiator_mac_addr=packet[u'mac'][u'srcMac'],
+                    responder_mac_addr=packet[u'mac'][u'dstMac']
+                )
+            self._clear_cells(old_parent)
+
+        if old_parent:
+            cells = self.mote.tsch.get_cells(
+                mac_addr         = old_parent,
+                slotframe_handle = self.SLOTFRAME_HANDLE
+            )
+            if len(cells) >= 1:
+                self.mote.sixp.send_request(
+                    dstMac   = old_parent,
+                    command  = d.SIXP_CMD_CLEAR,
+                    callback = _callback
+                )
+            else:
+                # do nothing
+                pass
+
+    def detect_schedule_inconsistency(self, peerMac):
+        # send a CLEAR request to the peer
+        self.mote.sixp.send_request(
+            dstMac   = peerMac,
+            command  = d.SIXP_CMD_CLEAR,
+            callback = lambda event, packet: self._clear_cells(peerMac)
+        )
+
+    def recv_request(self, packet):
+        if   packet[u'app'][u'code'] == d.SIXP_CMD_ADD:
+            self._receive_add_request(packet)
+        elif packet[u'app'][u'code'] == d.SIXP_CMD_DELETE:
+            self._receive_delete_request(packet)
+        elif packet[u'app'][u'code'] == d.SIXP_CMD_CLEAR:
+            self._receive_clear_request(packet)
+        elif packet[u'app'][u'code'] == d.SIXP_CMD_RELOCATE:
+            pass
+        else:
+            # not implemented or not supported
+            # ignore this request
+            pass
+
+    def clear_to_send_EBs_DATA(self):
+        # True if we have a TX cell to the current parent
+        slotframe = self.mote.tsch.get_slotframe(self.SLOTFRAME_HANDLE)
+        parent_addr = self.mote.rpl.getPreferredParent()
+        if (
+                (slotframe is None)
+                or
+                (parent_addr is None)
+            ):
+            tx_cells = []
+        else:
+            tx_cells = [
+                cell for cell in slotframe.get_cells_by_mac_addr(parent_addr)
+                if cell.options == [d.CELLOPTION_TX]
+            ]
+
+        if self.mote.dagRoot:
+            ret_val = True
+        else:
+            ret_val = bool(tx_cells)
+
+        return ret_val
+    
+    def get_tx_cells(self, mac_addr):
+        slotframe = self.mote.tsch.get_slotframe(
+            self.SLOTFRAME_HANDLE
+        )
+        if slotframe:
+            cells = slotframe.get_cells_by_mac_addr(mac_addr)
+            autonomous_tx_cell = self.get_autonomous_tx_cell(mac_addr)
+            return cells or autonomous_tx_cell
+        else:
+            return []
+        
+    def initialize_q_table(self,state_size,action_space_size):
+        for state in range(self.num_states):
+            self.Q_table[state] = [0]*action_space_size
+
+    def _get_available_slots(self):
+        available_slots = self.mote.tsch.get_available_slots(self.SLOTFRAME_HANDLE)
+        if isinstance(available_slots,list):
+            return list(set(available_slots) - self.locked_slots)
+        return []
+    
+    def _get_unused_cells(self,cell_option):
+        preferred_parent = self.mote.rpl.getPreferredParent()
+        available_cells = [
+                        {"channelOffset":cell.channel_offset,
+                            "slotOffset":cell.slot_offset} 
+                        for cell in self.mote.tsch.get_cells(
+                        preferred_parent,
+                        self.SLOTFRAME_HANDLE
+                    )
+                if cell.options == cell_option]
+        unused_cells = []
+        for cell in available_cells:
+            if cell not in self.used_cells:
+                unused_cells.append(cell)
+        return unused_cells
+    
+    def _compute_charge(self):
+        charge = 0
+        charge =  self.mote.radio.stats['idle_listen'] * d.CHARGE_IdleListen_uC
+        charge += self.mote.radio.stats['tx_data_rx_ack'] * d.CHARGE_TxDataRxAck_uC
+        charge += self.mote.radio.stats['rx_data_tx_ack'] * d.CHARGE_RxDataTxAck_uC
+        charge += self.mote.radio.stats['tx_data'] * d.CHARGE_TxData_uC
+        charge += self.mote.radio.stats['rx_data'] * d.CHARGE_RxData_uC
+        charge += self.mote.radio.stats['sleep'] * d.CHARGE_Sleep_uC
+        current_asn = self.engine.getAsn()
+        asn_synced = self.mote.tsch.asnLastSync
+        denominator = (float(current_asn-asn_synced) * self.settings.tsch_slotDuration)
+        if denominator != 0:
+            avg_current_uA = charge/(float(current_asn-asn_synced) * self.settings.tsch_slotDuration)
+        else:
+            avg_current_uA = 0
+        if avg_current_uA != 0 and self.remaining_battery >= 0:
+            self.remaining_battery = (self.remaining_battery - avg_current_uA)
+            return self.remaining_battery
+        return 0
+    
+    def _compute_traffic(self):
+        self.array_rxs_acks.append(self.mote.radio.stats["rx_data_tx_ack"] - self.prev_rx_ack)
+        self.prev_rx_ack = self.mote.radio.stats["rx_data_tx_ack"]
+        if len(self.array_rxs_acks) == self.SLOTFRAME_INTERVAL_SIZE + 1:
+            self.TRAFFIC = sum(
+                self.array_rxs_acks[:self.SLOTFRAME_INTERVAL_SIZE])/float(self.SLOTFRAME_INTERVAL_SIZE)
+            self.array_rxs_acks.pop(0)
+        return self.TRAFFIC
+    
+    def _compute_queue_average_ratio(self):
+        self.array_queue_ratio.append(self._compute_queue_ratio())
+        if len(self.array_queue_ratio) == self.SLOTFRAME_INTERVAL_SIZE + 1:
+            self.AVERAGE_QUEUE_SIZE = sum(
+                self.array_queue_ratio[:self.SLOTFRAME_INTERVAL_SIZE])/float(self.SLOTFRAME_INTERVAL_SIZE)
+            self.array_queue_ratio.pop(0)
+        return self.AVERAGE_QUEUE_SIZE
+    
+
+    def compute_reward(self,list_state_variables, action):
+        state_number = self.map_state_to_number(list_state_variables)
+        return self.reward_table.get((state_number, action), 0)  
+        
+    def discretize_queue_ratio(self,queue_ratio):
+        average_queue_ratio = self._compute_queue_average_ratio()
+        if queue_ratio > average_queue_ratio:
+            return 1
+        return 0
+    
+    def compute_discrete_energy_left(self,energy_left):
+        if energy_left >= self.remaining_battery / 2:
+            return 1
+        return 0
+
+    def discretize_traffic(self,traffic):
+        average_traffic = self._compute_traffic()
+        if traffic >= average_traffic:
+            return 1
+        return 0
+        
+    def discretize_variables(self, state_list_variables):
+        traffic = state_list_variables[0]
+        queue_ratio = state_list_variables[1]
+        energy_left = state_list_variables[2]
+        discrete_traffic = self.discretize_traffic(traffic)
+        discrete_queue_ratio = self.discretize_queue_ratio(queue_ratio)
+        discrete_energy_left = self.compute_discrete_energy_left(energy_left)
+        return [
+            discrete_traffic,
+            discrete_queue_ratio,
+            discrete_energy_left
+        ]
+
+    def map_state_to_number(self, list_state_variables):
+        discrete_state_variables = self.discretize_variables(list_state_variables)
+        discrete_traffic = discrete_state_variables[0]
+        discrete_queue_ratio = discrete_state_variables[1]
+        discrete_energy_left = discrete_state_variables[2]
+        binary_number = str(discrete_traffic) + str(discrete_queue_ratio) + str(discrete_energy_left)
+        return int(binary_number,2)
+    
+    def return_best_q_value(self,state):
+       current_vector = self.Q_table[state]
+       return np.max(current_vector)
+    
+    def return_best_q_action(self,state):
+        current_vector = self.Q_table[state]
+        return np.argmax(current_vector)
+    
+    def compute_q_table(self,list_state_variables,list_next_state_variables,action):
+        curr_state = self.map_state_to_number(list_state_variables)
+        next_state = self.map_state_to_number(list_next_state_variables)
+        #compute deltaQ
+        reward = self.compute_reward(list_state_variables, action)
+        deltaQ = reward + self.BETA * self.return_best_q_value(next_state)
+        #compute Q_table[curr_state][action]
+        self.Q_table[curr_state][action] = (1 - self.ALFA) * self.Q_table[curr_state][action] + (self.ALFA * deltaQ)
+    
+    def _compute_queue_ratio(self):
+        return len(self.mote.tsch.txQueue)/float(self.settings.tsch_tx_queue_size)
+    
+    def _is_minimal_cell(self,cell):
+        if cell.slot_offset == 0 and cell.channel_offset == 0:
+            return True
+        return False
+
+    def _create_available_cell_list(self, cell_list_len):
+        available_slots = self._get_available_slots()
+        # remove slot offset 0 that is reserved for the minimal shared
+        # cell
+        if 0 in available_slots:
+            available_slots.remove(0)
+
+        if len(available_slots) < cell_list_len:
+            # we don't have enough available cells; no cell is selected
+            selected_slots = []
+        else:
+            selected_slots = random.sample(available_slots, cell_list_len)
+
+
+        cell_list = []
+        for slot_offset in selected_slots:
+            channel_offset = random.randint(0, self.settings.phy_numChans - 1)
+            cell_list.append(
+                {
+                    'slotOffset'   : slot_offset,
+                    'channelOffset': channel_offset
+                }
+            )
+        self._lock_cells(cell_list)
+        return cell_list
+    
+    def _add_cells(self, neighbor, cell_list, cell_options):
+        try:
+            for cell in cell_list:
+                self.mote.tsch.addCell(
+                    slotOffset         = cell[u'slotOffset'],
+                    channelOffset      = cell[u'channelOffset'],
+                    neighbor           = neighbor,
+                    cellOptions        = cell_options,
+                    slotframe_handle   = self.SLOTFRAME_HANDLE
+                )
+        except Exception:
+            # We may fail in adding cells since they could be allocated for
+            # another peer. We need to have a locking or reservation mechanism
+            # to avoid such a situation.
+            raise
+
+    def _housekeeping_collision(self):
+        """
+        Identify cells where schedule collisions occur.
+        draft-chang-6tisch-msf-01:
+            The key for detecting a schedule collision is that, if a node has
+            several cells to the same preferred parent, all cells should exhibit
+            the same PDR.  A cell which exhibits a PDR significantly lower than
+            the others indicates than there are collisions on that cell.
+        :return:
+        """
+
+        if self.mote.tsch.get_slotframe(self.SLOTFRAME_HANDLE) is None:
+            return
+
+        # for quick access; get preferred parent
+        preferred_parent = self.mote.rpl.getPreferredParent()
+
+        # collect TX cells which has enough numTX
+        tx_cell_list = [cell for cell in self.mote.tsch.get_cells(preferred_parent, self.SLOTFRAME_HANDLE) if cell.options == [d.CELLOPTION_TX]]
+        # pick up TX cells whose NumTx is larger than
+        # MSF_MIN_NUM_TX. This is an implementation decision, which is
+        # easier to implement than what section 5.3 of
+        # draft-ietf-6tisch-msf-03.txt describes as the step-2 of the
+        # house-keeping process.
+        tx_cell_list = {
+            cell.slot_offset: cell for cell in tx_cell_list if (
+                d.MSF_MIN_NUM_TX < cell.num_tx
+            )
+        }
+        # collect PDRs of the TX cells
+        def pdr(cell):
+            assert cell.num_tx > 0
+            return cell.num_tx_ack / float(cell.num_tx)
+        pdr_list = {
+            slotOffset: pdr(cell) for slotOffset, cell in list(tx_cell_list.items())
+        }
+
+        if len(pdr_list) > 0:
+            # find a cell to relocate using the highest PDR value
+            highest_pdr = max(pdr_list.values())
+            relocation_cell_list = [
+                {
+                    'slotOffset'   : slotOffset,
+                    'channelOffset': tx_cell_list[slotOffset].channel_offset
+                } for slotOffset, pdr in list(pdr_list.items()) if (
+                    d.MSF_RELOCATE_PDRTHRES < (highest_pdr - pdr)
+                )
+            ]
+            if (
+                    len(relocation_cell_list) > 0
+                    and
+                    self.retry_count[preferred_parent] == -1
+                ):
+                # reset retry counter
+                self.retry_count[preferred_parent] = 0
+                self._request_relocating_cells(
+                    neighbor             = preferred_parent,
+                    cell_options         = self.TX_CELL_OPT,
+                    num_relocating_cells = len(relocation_cell_list),
+                    cell_list            = relocation_cell_list
+                )
+        else:
+            # we don't have any TX cell whose PDR is available; do nothing
+            pass
+
+        # schedule next housekeeping
+        self.engine.scheduleIn(
+            delay         = d.MSF_HOUSEKEEPINGCOLLISION_PERIOD,
+            cb            = self._housekeeping_collision,
+            uniqueTag     = (self.mote.id, u'_housekeeping_collision'),
+            intraSlotOrder= d.INTRASLOTORDER_STACKTASKS,
+        )
+
+    #################6P INTERFACE CODE################
+
+    # ADD command related stuff
+    def _request_adding_cells(
+            self,
+            parent,
+            cell_type,
+            num_cells,
+            cell_list
+        ):
+
+        if num_cells == 0:
+            # nothing to add
+            self.retry_count[parent] = -1
+            return
+
+        if len(cell_list) == 0:
+            # we don't have available cells right now
+            self.log(
+                SimEngine.SimLog.LOG_MSF_ERROR_SCHEDULE_FULL,
+                {
+                    '_mote_id'    : self.mote.id
+                }
+            )
+            self.retry_count[parent] = -1
+            return
+
+        # prepare _callback which is passed to SixP.send_request()
+        callback = self._create_add_request_callback(
+            parent,
+            num_cells,
+            cell_type,
+            cell_list
+        )
+
+        # send a request
+        self.mote.sixp.send_request(
+            dstMac      = parent,
+            command     = d.SIXP_CMD_ADD,
+            cellOptions = cell_type,
+            numCells    = num_cells,
+            cellList    = cell_list,
+            callback    = callback
+        )
+
+    
+    def _request_deleting_cells(
+            self,
+            parent,
+            num_cells,
+            cell_options
+        ):
+
+        # prepare cell_list to send
+        cell_list = self._create_occupied_cell_list(
+            neighbor      = parent,
+            cell_options  = cell_options,
+            cell_list_len = self.DEFAULT_CELL_LIST_LEN
+        )
+        assert len(cell_list) > 0
+
+        # prepare callback
+        callback = self._create_delete_request_callback(
+            parent,
+            num_cells,
+            cell_options
+        )
+
+        # send a DELETE request
+        self.mote.sixp.send_request(
+            dstMac      = parent,
+            command     = d.SIXP_CMD_DELETE,
+            cellOptions = cell_options,
+            numCells    = num_cells,
+            cellList    = cell_list,
+            callback    = callback
+        )
+
+    def _create_delete_request_callback(
+            self,
+            neighbor,
+            num_cells,
+            cell_options
+        ):
+        def callback(event, packet):
+            if (
+                    (event == d.SIXP_CALLBACK_EVENT_PACKET_RECEPTION)
+                    and
+                    (packet[u'app'][u'msgType'] == d.SIXP_MSG_TYPE_RESPONSE)
+                ):
+                self.retry_count[neighbor] = -1
+                if packet[u'app'][u'code'] == d.SIXP_RC_SUCCESS:
+                    self._delete_cells(
+                        neighbor     = neighbor,
+                        cell_list    = packet[u'app'][u'cellList'],
+                        cell_options = cell_options
+                    )
+                else:
+                    # TODO: request doesn't succeed; how should we do?
+                    pass
+            elif event == d.SIXP_CALLBACK_EVENT_TIMEOUT:
+                if self.retry_count[neighbor] == self.MAX_RETRY:
+                    # give it up
+                    self.retry_count[neighbor] = -1
+                    if neighbor == self.mote.rpl.getPreferredParent():
+                        self.mote.rpl.of.poison_rpl_parent(neighbor)
+                else:
+                    # retry
+                    self.retry_count[neighbor] += 1
+                    self._request_deleting_cells(
+                        neighbor,
+                        num_cells,
+                        cell_options
+                    )
+            else:
+                # ignore other events
+                pass
+
+        return callback
+
+        # CLEAR command related stuff
+    def _receive_clear_request(self, request):
+
+        peerMac = request[u'mac'][u'srcMac']
+
+        def callback(event, packet):
+            # remove all the cells no matter what happens
+            self._clear_cells(peerMac)
+
+        # create CLEAR response
+        self.mote.sixp.send_response(
+            dstMac      = peerMac,
+            return_code = d.SIXP_RC_SUCCESS,
+            callback    = callback
+        )
+
+    def _create_add_request_callback(
+            self,
+            parent,
+            num_cells,
+            cell_type,
+            cell_list
+        ):
+        def callback(event, packet):
+            if event == d.SIXP_CALLBACK_EVENT_PACKET_RECEPTION:
+                assert packet[u'app'][u'msgType'] == d.SIXP_MSG_TYPE_RESPONSE
+                if packet[u'app'][u'code'] == d.SIXP_RC_SUCCESS:
+                    # add cells on success of the transaction
+                    self._add_cells(
+                        neighbor     = parent,
+                        cell_list    = packet[u'app'][u'cellList'],
+                        cell_options = cell_type
+                    )
+
+                    # The received CellList could be smaller than the requested
+                    # NumCells; adjust num_{tx,rx}_cells
+                    remaining_cells = num_cells - len(packet[u'app'][u'cellList'])
+                    if remaining_cells > 0:
+                        # start another transaction
+                        self.retry_count[parent] = 0
+                        self._request_adding_cells(
+                            parent       = parent,
+                            cell_type      = cell_type,
+                            num_cells      = num_cells,
+                            cell_list      = cell_list
+                        )
+                else:
+                    # TODO: request doesn't succeed; how should we do?
+                    self.retry_count[parent] = -1
+
+            elif event == d.SIXP_CALLBACK_EVENT_TIMEOUT:
+                if self.retry_count[parent] == self.MAX_RETRY:
+                    # give up this neighbor
+                    if parent == self.mote.rpl.getPreferredParent():
+                        self.mote.rpl.of.poison_rpl_parent(parent)
+                    self.retry_count[parent] = -1 # done
+                else:
+                    # retry
+                    self.retry_count[parent] += 1
+                    self._request_adding_cells(
+                        parent       = parent,
+                        cell_type      = cell_type,
+                        num_cells      = num_cells,
+                        cell_list      = cell_list
+                    )
+            else:
+                # ignore other events
+                pass
+
+            # unlock the slots used in this transaction
+            self._unlock_cells(cell_list)
+
+        return callback
+    
+    def _receive_add_request(self, request):
+
+        # for quick access
+        proposed_cells = request[u'app'][u'cellList']
+        peerMac        = request[u'mac'][u'srcMac']
+
+        # find available cells in the received CellList
+        slots_in_cell_list = set(
+            [c[u'slotOffset'] for c in proposed_cells]
+        )
+        available_slots  = list(
+            slots_in_cell_list.intersection(
+                set(self._get_available_slots())
+            )
+        )
+
+        # prepare cell_list
+        candidate_cells = [
+            c for c in proposed_cells if c[u'slotOffset'] in available_slots
+        ]
+        if len(candidate_cells) < request[u'app'][u'numCells']:
+            cell_list = candidate_cells
+        else:
+            cell_list = random.sample(
+                candidate_cells,
+                request[u'app'][u'numCells']
+            )
+
+        # prepare callback
+        if len(available_slots) > 0:
+            code = d.SIXP_RC_SUCCESS
+
+            self._lock_cells(candidate_cells)
+            def callback(event, packet):
+                if event == d.SIXP_CALLBACK_EVENT_MAC_ACK_RECEPTION:
+                    # prepare cell options for this responder
+                    if request[u'app'][u'cellOptions'] == self.TX_CELL_OPT:
+                        # invert direction
+                        cell_options = self.RX_CELL_OPT
+                    elif request[u'app'][u'cellOptions'] == self.RX_CELL_OPT:
+                        # invert direction
+                        cell_options = self.TX_CELL_OPT
+                    else:
+                        # Unsupported cell options for MSF
+                        raise Exception()
+
+                    self._add_cells(
+                        neighbor     = peerMac,
+                        cell_list    = cell_list,
+                        cell_options = cell_options
+                )
+                self._unlock_cells(candidate_cells)
+        else:
+            code      = d.SIXP_RC_ERR
+            cell_list = None
+            callback  = None
+
+        # send a response
+        self.mote.sixp.send_response(
+            dstMac      = peerMac,
+            return_code = code,
+            cellList    = cell_list,
+            callback    = callback
+        )
+    
+    def _are_cells_allocated(
+            self,
+            peerMac,
+            cell_list,
+            cell_options
+        ):
+
+        # collect allocated cells
+        assert cell_options in [self.TX_CELL_OPT, self.RX_CELL_OPT]
+        allocated_cells = [cell for cell in self.mote.tsch.get_cells(peerMac, self.SLOTFRAME_HANDLE) if cell.options == cell_options]
+
+        # test all the cells in the cell list against the allocated cells
+        ret_val = True
+        for cell in cell_list:
+            slotOffset    = cell[u'slotOffset']
+            channelOffset = cell[u'channelOffset']
+            cell = self.mote.tsch.get_cell(
+                slot_offset      = slotOffset,
+                channel_offset   = channelOffset,
+                mac_addr         = peerMac,
+                slotframe_handle = self.SLOTFRAME_HANDLE
+            )
+
+            if cell is None:
+                ret_val = False
+                break
+
+        return ret_val
+
+    def _receive_delete_request(self, request):
+
+        # for quick access
+        num_cells           = request[u'app'][u'numCells']
+        cell_options        = request[u'app'][u'cellOptions']
+        candidate_cell_list = request[u'app'][u'cellList']
+        peerMac             = request[u'mac'][u'srcMac']
+
+        # confirm all the cells in the cell list are allocated for the peer
+        # with the specified cell options
+        #
+        # invert the direction in cell_options
+        assert cell_options in [self.TX_CELL_OPT, self.RX_CELL_OPT]
+        if   cell_options == self.TX_CELL_OPT:
+            our_cell_options = self.RX_CELL_OPT
+        elif cell_options == self.RX_CELL_OPT:
+            our_cell_options   = self.TX_CELL_OPT
+
+        if (
+                (
+                    self._are_cells_allocated(
+                        peerMac      = peerMac,
+                        cell_list    = candidate_cell_list,
+                        cell_options = our_cell_options
+                    ) is True
+                )
+                and
+                (num_cells <= len(candidate_cell_list))
+            ):
+            code = d.SIXP_RC_SUCCESS
+            #decide what cells to delete
+            cell_list = random.sample(candidate_cell_list, num_cells)
+
+            def callback(event, packet):
+                if event == d.SIXP_CALLBACK_EVENT_MAC_ACK_RECEPTION:
+                    self._delete_cells(
+                        neighbor     = peerMac,
+                        cell_list    = cell_list,
+                        cell_options = our_cell_options
+                )
+        else:
+            code      = d.SIXP_RC_ERR
+            cell_list = None
+            callback  = None
+
+        # send the response
+        self.mote.sixp.send_response(
+            dstMac      = peerMac,
+            return_code = code,
+            cellList    = cell_list,
+            callback    = callback
+        )
+
+    def _clear_cells(self, neighbor):
+        cells = self.mote.tsch.get_cells(
+            neighbor,
+            self.SLOTFRAME_HANDLE
+        )
+        for cell in cells:
+            assert neighbor == cell.mac_addr
+            self.mote.tsch.deleteCell(
+                slotOffset       = cell.slot_offset,
+                channelOffset    = cell.channel_offset,
+                neighbor         = cell.mac_addr,
+                cellOptions      = cell.options,
+                slotframe_handle = self.SLOTFRAME_HANDLE
+            )
+        self.mote.sixp.reset_seqnum(neighbor)
+
+    def _create_occupied_cell_list(
+            self,
+            neighbor,
+            cell_options,
+            cell_list_len
+        ):
+
+        occupied_cells = [cell for cell in self.mote.tsch.get_cells(neighbor, self.SLOTFRAME_HANDLE) if cell.options == cell_options]
+
+        cell_list = [
+            {
+                'slotOffset'   : cell.slot_offset,
+                'channelOffset': cell.channel_offset
+            } for cell in occupied_cells
+        ]
+
+        if cell_list_len <= len(occupied_cells):
+            cell_list = random.sample(cell_list, cell_list_len)
+
+        return cell_list
+
+    def _delete_cells(self, neighbor, cell_list, cell_options):
+        for cell in cell_list:
+            if self.mote.tsch.get_cell(
+                    slot_offset      = cell[u'slotOffset'],
+                    channel_offset   = cell[u'channelOffset'],
+                    mac_addr         = neighbor,
+                    slotframe_handle = self.SLOTFRAME_HANDLE
+               ) is None:
+                # the cell may have been deleted for some reason
+                continue
+            self.mote.tsch.deleteCell(
+                slotOffset       = cell[u'slotOffset'],
+                channelOffset    = cell[u'channelOffset'],
+                neighbor         = neighbor,
+                cellOptions      = cell_options,
+                slotframe_handle = self.SLOTFRAME_HANDLE
+            )
+
+    def sixp_interface_add(
+            self,
+            preferred_parent,
+            num_cells,
+            cell_option,
+        ):
+
+        cell_list = self._create_available_cell_list(self.DEFAULT_CELL_LIST_LEN)
+        # prepare _callback which is passed to SixP.send_request()
+        callback = self._create_add_request_callback(
+            preferred_parent,
+            num_cells,
+            cell_option,
+            cell_list
+        )
+        self.mote.sixp.send_request(
+            dstMac      = preferred_parent,
+            command     = d.SIXP_CMD_ADD,
+            cellOptions = cell_option,
+            numCells    = num_cells,
+            cellList    = cell_list,
+            callback    = callback
+        )
+
+    #num_cells is here only for backward compatibility
+    def sixp_interface_delete(
+            self,
+            preferred_parent,
+            cell_option,
+            num_cells
+        ):
+
+        cells_to_delete = self._get_unused_cells(cell_option)
+
+        if len(cells_to_delete) >= 1:
+            callback = self._create_delete_request_callback(
+                preferred_parent,
+                len(cells_to_delete),
+                cell_option
+            )
+            self.mote.sixp.send_request(
+                dstMac      = preferred_parent,
+                command     = d.SIXP_CMD_DELETE,
+                cellOptions = cell_option,
+                numCells    = num_cells,
+                cellList    = cells_to_delete,
+                callback    = callback
+            )
+#################################################
+    # autonomous cell
+    def get_autonomous_rx_cell(self):
+        slotframe = self.mote.tsch.get_slotframe(
+            self.SLOTFRAME_HANDLE
+        )
+        if slotframe:
+            cells = slotframe.get_cells_by_mac_addr(None)
+            if cells:
+                assert len(cells) == 1
+                assert cells[0].options == [d.CELLOPTION_RX]
+                ret = cells[0]
+            else:
+                ret = None
+        else:
+            ret = None
+        return ret
+
+    def allocate_autonomous_rx_cell(self):
+        mac_addr = self.mote.get_mac_addr()
+        slot_offset, channel_offset = self._compute_autonomous_cell(mac_addr)
+        self.mote.tsch.addCell(
+            slotOffset       = slot_offset,
+            channelOffset    = channel_offset,
+            neighbor         = None,
+            cellOptions      = [
+                d.CELLOPTION_RX
+            ],
+            slotframe_handle = self.SLOTFRAME_HANDLE
+        )
+
+    def get_autonomous_tx_cell(self, mac_addr):
+        slotframe = self.mote.tsch.get_slotframe(
+            self.SLOTFRAME_HANDLE
+        )
+        if slotframe:
+            cells = slotframe.get_cells_by_mac_addr(mac_addr)
+            autonomous_cells = [
+                cell for cell in cells
+                if (
+                        (d.CELLOPTION_TX in cell.options)
+                        and
+                        (d.CELLOPTION_SHARED in cell.options)
+                )
+            ]
+            if autonomous_cells:
+                assert len(autonomous_cells) == 1
+                ret = autonomous_cells[0]
+            else:
+                ret = None
+        else:
+            ret = None
+        return ret
+
+    def allocate_autonomous_tx_cell(self, mac_addr):
+        slot_offset, channel_offset = self._compute_autonomous_cell(mac_addr)
+        self.mote.tsch.addCell(
+            slotOffset       = slot_offset,
+            channelOffset    = channel_offset,
+            neighbor         = mac_addr,
+            cellOptions      = [
+                d.CELLOPTION_TX,
+                d.CELLOPTION_SHARED
+            ],
+            slotframe_handle = self.SLOTFRAME_HANDLE
+        )
+
+    def deallocate_autonomous_tx_cell(self, mac_addr):
+        slot_offset, channel_offset = self._compute_autonomous_cell(mac_addr)
+        self.mote.tsch.deleteCell(
+            slotOffset       = slot_offset,
+            channelOffset    = channel_offset,
+            neighbor         = mac_addr,
+            cellOptions      = [
+                d.CELLOPTION_TX,
+                d.CELLOPTION_SHARED
+            ],
+            slotframe_handle = self.SLOTFRAME_HANDLE
+        )
+
+    def _compute_autonomous_cell(self, mac_addr):
+        slotframe = self.mote.tsch.get_slotframe(
+            self.SLOTFRAME_HANDLE
+        )
+        hash_value = self._sax(mac_addr)
+
+        slot_offset = int(1 + (hash_value % (slotframe.length - 1)))
+        channel_offset = int(hash_value % self.settings.phy_numChans)
+
+        return (slot_offset, channel_offset)
+
+    # SAX
+    def _sax(self, mac_addr):
+        # XXX: a concrete definition of this hash function is needed to be
+        # provided by the draft
+
+        LEFT_SHIFT_NUM = 5
+        RIGHT_SHIFT_NUM = 2
+
+        # assuming v (seed) is 0
+        hash_value = 0
+        for word in netaddr.EUI(mac_addr).words:
+            for byte in divmod(word, 0x100):
+                left_shifted = (hash_value << LEFT_SHIFT_NUM)
+                right_shifted = (hash_value >> RIGHT_SHIFT_NUM)
+                hash_value ^= left_shifted + right_shifted + byte
+
+        # assuming T (table size) is 16-bit
+        return hash_value & 0xFFFF

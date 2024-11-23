@@ -12,7 +12,7 @@ import netaddr
 import SimEngine
 from . import MoteDefines as d
 from . import sixp
-from SimEngine.Mote.scheduling_functions import SFNone,MSF
+from SimEngine.Mote.scheduling_functions import SFNone,MSF,Qlearning,QlearningSBRC24
 
 
 # =========================== defines =========================================

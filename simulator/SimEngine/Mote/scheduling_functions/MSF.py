@@ -83,6 +83,9 @@ class SchedulingFunctionMSF(SchedulingFunctionBase):
 
     # === indications from other layers
 
+    def indication_slotframe_window_ending(self,slotframe_period_size):
+        pass
+
     def indication_neighbor_added(self, neighbor_mac_addr):
         pass
 
@@ -555,15 +558,6 @@ class SchedulingFunctionMSF(SchedulingFunctionBase):
             uniqueTag     = (self.mote.id, u'_housekeeping_collision'),
             intraSlotOrder= d.INTRASLOTORDER_STACKTASKS,
         )
-
-    # cell manipulation helpers
-    def _lock_cells(self, cell_list):
-        for cell in cell_list:
-            self.locked_slots.add(cell[u'slotOffset'])
-
-    def _unlock_cells(self, cell_list):
-        for cell in cell_list:
-            self.locked_slots.remove(cell[u'slotOffset'])
 
     def _add_cells(self, neighbor, cell_list, cell_options):
         try:

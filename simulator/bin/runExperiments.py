@@ -20,7 +20,7 @@ with open('config.json','r') as f:
 settings['settings']['combination']['exec_numMotes'] = args.combinations
 settings['execution']['numCPUs'] = args.num_cpus
 settings['execution']['numRuns'] = args.num_runs
-settings['settings']['sf_class'] = args.sched_function
+settings['settings']['regular']['sf_class'] = args.sched_function
 
 with open('config.json','w') as f:
     f.write(json.dumps(settings,indent=4))
