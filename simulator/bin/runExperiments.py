@@ -5,7 +5,7 @@ import os
 parser = argparse.ArgumentParser()
 
 parser.add_argument('-nc','--num_cpus', type=int, help='Number of cpu cores', required=True)
-parser.add_argument('-nr','--num_runs', type=int, help='Numberr of times each combination of motes will be run', required=True)
+parser.add_argument('-nr','--num_runs', type=int, help='Number of times each combination of motes will be run', required=True)
 parser.add_argument('-cb','--combinations',type=int, nargs='+', help='combination of number of Motes', required=True)
 parser.add_argument('-sf','--sched_function', help='scheduling function alias', required=True)
 

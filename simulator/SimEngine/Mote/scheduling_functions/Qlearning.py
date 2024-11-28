@@ -26,26 +26,21 @@ class SchedulingFunctionQlearning(SchedulingFunctionBase):
     QUEUE_OVERFLOW = False
 
     #poisson_computation
-    LAMBDA = 0
     num_packets_in_current_slotframe = 0
 
     #Q-learning
     current_state = (0,0,0)
-    EPSLON = None
-    MAX_EPSLON = 1.0           
-    MIN_EPSLON = 0.05           
-    EPSLON_DECAY_RATE = 0.1
+    EPSLON = None         
     EPISODE = 0
     Q_table = dict()
     num_states = 8
     STATE_SIZE = 3
     ACTION_STATE_SIZE = 3
-    SLOTFRAME_INTERVAL_SIZE = 3
     cumulative_reward = 0
     TX_CELLS_PASSED = 0
     RX_CELLS_PASSED = 0
-    ALFA = 0.9
-    BETA = 0.2
+    MAX_EPSLON = 1
+
 
     reward_table = {
         (0, 0): -1, (0, 1): 1, (0, 2): 0,
@@ -70,13 +65,21 @@ class SchedulingFunctionQlearning(SchedulingFunctionBase):
     AVERAGE_QUEUE_SIZE = 0
     array_queue_ratio = []
 
-
     
     def __init__(self, mote):
         super(SchedulingFunctionQlearning, self).__init__(mote)
         self.locked_slots         = set([])
         self.retry_count          = {}
-        
+        self.ALFA = self.settings.ALFA
+        self.BETA = self.settings.BETA
+        self.EPSLON_DECAY_RATE = self.settings.EPSLON_DECAY_RATE
+        self.MIN_EPSLON = self.settings.MIN_EPSLON
+        self.SLOTFRAME_INTERVAL_SIZE = self.settings.SLOTFRAME_INTERVAL_SIZE
+        self.MAX_TX_CELLS_PASSED = self.settings.MAX_TX_CELLS_PASSED
+        self.MAX_RX_CELLS_PASSED = self.settings.MAX_RX_CELLS_PASSED
+        self.DISCRETIZE_ENERGY_PARAMETER = self.settings.DISCRETIZE_ENERGY_PARAMETER
+        self.LAMBDA = self.settings.LAMBDA
+
 
     def start(self):
         slotframe_0 = self.mote.tsch.get_slotframe(0)
@@ -163,7 +166,7 @@ class SchedulingFunctionQlearning(SchedulingFunctionBase):
     def indication_tx_cell_elapsed(self, cell, sent_packet):
         if bool(sent_packet):
             self.TX_CELLS_PASSED = self.TX_CELLS_PASSED + 1
-        if self.TX_CELLS_PASSED % 100 == 0:
+        if self.TX_CELLS_PASSED % self.MAX_TX_CELLS_PASSED == 0:
             self.adapt_to_traffic([d.CELLOPTION_TX])
             self.TX_CELLS_PASSED = 0
         if not self._is_minimal_cell(cell):
@@ -172,7 +175,7 @@ class SchedulingFunctionQlearning(SchedulingFunctionBase):
     def indication_rx_cell_elapsed(self, cell, received_packet):
         if bool(received_packet):
             self.RX_CELLS_PASSED = self.RX_CELLS_PASSED + 1
-        if self.RX_CELLS_PASSED % 100 == 0:
+        if self.RX_CELLS_PASSED % self.MAX_RX_CELLS_PASSED == 0:
             self.adapt_to_traffic([d.CELLOPTION_RX])
             self.RX_CELLS_PASSED = 0
         if not self._is_minimal_cell(cell):
@@ -429,7 +432,7 @@ class SchedulingFunctionQlearning(SchedulingFunctionBase):
         return 0
     
     def compute_discrete_energy_left(self,energy_left):
-        if energy_left >= self.remaining_battery / 2:
+        if energy_left >= self.remaining_battery * self.DISCRETIZE_ENERGY_PARAMETER:
             return 1
         return 0
 
