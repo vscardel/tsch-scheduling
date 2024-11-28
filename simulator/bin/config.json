@@ -2,12 +2,12 @@
     "version": 0,
     "execution": {
         "numCPUs": 1,
-        "numRuns": 3
+        "numRuns": 1
     },
     "settings": {
         "combination": {
             "exec_numMotes": [
-                10
+                50
             ]
         },
         "regular": {
@@ -50,7 +50,7 @@
             "phy_numChans": 16,
             "motes_eui64": [],
             "ALFA": 0.5,
-            "BETA" :0.2,
+            "BETA": 0.2,
             "SLOTFRAME_INTERVAL_SIZE": 3,
             "EPSLON_DECAY_RATE": 0.1,
             "MIN_EPSLON": 0.05,
@@ -61,7 +61,7 @@
         }
     },
     "logging": "all",
-    "log_directory_name": "startTime",
+    "log_directory_name": "Qlearning",
     "post": [
         "python2 compute_kpis.py",
         "python2 plot.py"
