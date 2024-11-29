@@ -1,6 +1,9 @@
 import argparse
 import json
 import os
+import shutil
+import time
+
 
 
 parameters_position = {
@@ -39,7 +42,44 @@ def efficience_function(parameters, args):
 
     #run simulator
     os.system('python2 runSim.py')
-    
+
+    #get results
+    num_motes = settings['settings']['combination']['exec_numMotes'][0]
+
+    kpis = None
+    for tentativa in range(3):
+        try:
+            with open(
+                os.path.join(
+                    'simData', 
+                    args.output_folder, 
+                    f'exec_numMotes_{num_motes}.dat.kpi'
+                )
+            , 'r') as f:
+                json_string = f.read()
+                kpis = json.loads(json_string)
+        except Exception as e:
+            print(e)
+            print(f"Algo deu errado tentando ler kpis na tentativa {tentativa}")
+                
+
+        if kpis:
+            network_lifetime = kpis['0']['global-stats']['network_lifetime'][0]['min']
+            packet_delivety_ratio = kpis['0']['global-stats']['e2e-upstream-delivery'][0]['value']
+            latency = kpis['0']['global-stats']['e2e-upstream-latency'][0]['mean']
+            joining_time = kpis['0']['global-stats']["joining-time"][0]['mean']
+
+            #we dont need the folder anymore
+            shutil.rmtree(        
+                    os.path.join(
+                    'simData', 
+                    args.output_folder
+                )
+            )
+            score = network_lifetime + latency + joining_time - packet_delivety_ratio
+            return score
+        else:
+            return None
 
 parser = argparse.ArgumentParser()
 
@@ -62,4 +102,8 @@ parameters = [
     0.5,
     3
 ]
+before = time.time()
 efficience = efficience_function(parameters, args)
+later = time.time()
+print(efficience)
+print(later - before)
