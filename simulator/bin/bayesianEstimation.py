@@ -2,9 +2,24 @@ import argparse
 import json
 import os
 import shutil
-import time
+from skopt import gp_minimize
+from skopt.plots import plot_convergence
+import matplotlib.pyplot as plot
 
 
+import numpy as np
+
+def convert_types(obj):
+    if isinstance(obj, dict):
+        return {k: convert_types(v) for k, v in obj.items()}
+    elif isinstance(obj, list):
+        return [convert_types(i) for i in obj]
+    elif isinstance(obj, np.integer): 
+        return int(obj)
+    elif isinstance(obj, np.floating): 
+        return float(obj)
+    else:
+        return obj
 
 parameters_position = {
    "ALFA": 0,
@@ -18,7 +33,8 @@ parameters_position = {
    "LAMBDA": 8
 }
 
-def efficience_function(parameters, args):
+def efficience_function(parameters):
+    global args
 
     settings = None
 
@@ -36,6 +52,8 @@ def efficience_function(parameters, args):
     for parameter_name,position in parameters_position.items():
         parameter_value = parameters[position]
         settings['settings']['regular'][parameter_name] = parameter_value
+
+    settings = convert_types(settings)
 
     with open('config.json','w') as f:
         f.write(json.dumps(settings,indent=4))
@@ -91,19 +109,31 @@ parser.add_argument('-of','--output_folder', help='output folder name', required
 
 args = parser.parse_args()
 
-parameters = [
-    0.5,
-    0.2,
-    3,
-    0.1,
-    0.05,
-    100,
-    100,
-    0.5,
-    3
-]
-before = time.time()
-efficience = efficience_function(parameters, args)
-later = time.time()
-print(efficience)
-print(later - before)
+res = gp_minimize(efficience_function,# the function to minimize
+                  [(0.1, 1.0),
+                   (0.1, 1.0),
+                   (1,10),
+                   (0.001,0.01),
+                   (0.1,0.3),
+                   (1,100),
+                   (1,100),
+                   (0.1,0.9),
+                   (1,10)],      # the bounds on each dimension of x
+                  acq_func="EI",      # the acquisition function
+                  n_calls=15,         # the number of evaluations of f
+                  n_random_starts=5,  # the number of random initialization points
+                  noise=0.1**2,       # the noise level (optional)
+                  random_state=1234)   # the random seed
+
+print('optimal set of parameters')
+print(res.x)
+
+print('best value')
+print(min(res.func_vals))
+
+ax = plot_convergence(res)
+ax.set_title("Optimization Convergence")
+ax.set_xlabel("Number of Evaluations")
+ax.set_ylabel("Minimum Objective Function Value")
+
+plot.savefig("convergence_plot.png")
