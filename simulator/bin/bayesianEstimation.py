@@ -5,9 +5,23 @@ import shutil
 from skopt import gp_minimize
 from skopt.plots import plot_convergence
 import matplotlib.pyplot as plot
-
-
 import numpy as np
+
+MAX_FUNCTION_VALUE = 100000
+
+max_values = {
+    'latency': 100000,
+    'join_time': 100000,
+    'network_lifetime': 100000,
+    'packet_delivery_ratio': 100000
+}
+
+min_values = {
+    'latency': 100000,
+    'join_time': 100000,
+    'network_lifetime': 100000,
+    'packet_delivery_ratio': 100000
+}
 
 def convert_types(obj):
     if isinstance(obj, dict):
@@ -33,6 +47,24 @@ parameters_position = {
    "LAMBDA": 8
 }
 
+def remove_results_folder(args):
+    shutil.rmtree(        
+            os.path.join(
+            'simData', 
+            args.output_folder
+        )
+    )
+
+def update_min_max(metric_name, value):
+    global max_values, min_values
+    max_values[metric_name] = max(max_values[metric_name], value)
+    min_values[metric_name] = min(min_values[metric_name], value)
+
+def normalize(metric_name, value):
+    max_val = max_values[metric_name]
+    min_val = min_values[metric_name]
+    return (value - min_val) / (max_val - min_val) if max_val > min_val else 0
+
 def efficience_function(parameters):
     global args
 
@@ -48,20 +80,20 @@ def efficience_function(parameters):
     settings['settings']['regular']['sf_class'] = args.sched_function
     settings['log_directory_name']= args.output_folder
 
-    #configure simulator with the parameters
-    for parameter_name,position in parameters_position.items():
+    # Configure simulator with the parameters
+    for parameter_name, position in parameters_position.items():
         parameter_value = parameters[position]
         settings['settings']['regular'][parameter_name] = parameter_value
 
     settings = convert_types(settings)
 
-    with open('config.json','w') as f:
-        f.write(json.dumps(settings,indent=4))
+    with open('config.json', 'w') as f:
+        f.write(json.dumps(settings, indent=4))
 
-    #run simulator
+    # Run simulator
     os.system('python2 runSim.py')
 
-    #get results
+    # Get results
     num_motes = settings['settings']['combination']['exec_numMotes'][0]
 
     kpis = None
@@ -76,59 +108,75 @@ def efficience_function(parameters):
             , 'r') as f:
                 json_string = f.read()
                 kpis = json.loads(json_string)
+                break
         except Exception as e:
             print(e)
-            print(f"Algo deu errado tentando ler kpis na tentativa {tentativa}")
+            print(f"Something went wrong reading KPIs on try {tentativa}")
                 
+    if kpis:
 
-        if kpis:
-            network_lifetime = kpis['0']['global-stats']['network_lifetime'][0]['min']
-            packet_delivety_ratio = kpis['0']['global-stats']['e2e-upstream-delivery'][0]['value']
-            latency = kpis['0']['global-stats']['e2e-upstream-latency'][0]['mean']
-            joining_time = kpis['0']['global-stats']["joining-time"][0]['mean']
+        latency = kpis['0']['global-stats']['e2e-upstream-latency'][0]['mean']
+        join_time = kpis['0']['global-stats']["joining-time"][0]['mean']
+        network_lifetime = kpis['0']['global-stats']['network_lifetime'][0]['min']
+        packet_delivery_ratio = kpis['0']['global-stats']['e2e-upstream-delivery'][0]['value']
 
-            #we dont need the folder anymore
-            shutil.rmtree(        
-                    os.path.join(
-                    'simData', 
-                    args.output_folder
-                )
-            )
-            score = network_lifetime + latency + joining_time - packet_delivety_ratio
-            return score
-        else:
-            return None
+        update_min_max('latency', latency)
+        update_min_max('join_time', join_time)
+        update_min_max('network_lifetime', network_lifetime)
+        update_min_max('packet_delivery_ratio', packet_delivery_ratio)
+
+        latency = normalize('latency', latency)
+        join_time = normalize('join_time', join_time)
+        network_lifetime = normalize('network_lifetime', network_lifetime)
+        packet_delivery_ratio = normalize('packet_delivery_ratio', packet_delivery_ratio)
+
+
+        try:
+            score = latency - join_time + network_lifetime - packet_delivery_ratio
+        except Exception as e:
+            print('Failed to calculate score. Returning infinity.')
+            return MAX_FUNCTION_VALUE
+        
+        # Remove results folder
+        remove_results_folder(args)
+
+        return score
+    else:
+        return MAX_FUNCTION_VALUE
 
 parser = argparse.ArgumentParser()
 
 parser.add_argument('-nc','--num_cpus', type=int, help='Number of cpu cores', required=True)
 parser.add_argument('-nr','--num_runs', type=int, help='Number of times each combination of motes will be run', required=True)
-parser.add_argument('-cb','--combinations',type=int, nargs='+', help='combination of number of Motes', required=True)
-parser.add_argument('-sf','--sched_function', help='scheduling function alias', required=True)
-parser.add_argument('-of','--output_folder', help='output folder name', required=True)
+parser.add_argument('-cb','--combinations',type=int, nargs='+', help='Combination of number of Motes', required=True)
+parser.add_argument('-sf','--sched_function', help='Scheduling function alias', required=True)
+parser.add_argument('-app','--application', help='Application Type', required=True)
+parser.add_argument('-of','--output_folder', help='Output folder name', required=True)
+parser.add_argument('-ne','--num_evaluations', type=int, help='Number of evaluations of efficiency function', required=True)
 
 args = parser.parse_args()
 
-res = gp_minimize(efficience_function,# the function to minimize
-                  [(0.1, 1.0),
-                   (0.1, 1.0),
-                   (1,10),
-                   (0.001,0.01),
-                   (0.1,0.3),
-                   (1,100),
-                   (1,100),
-                   (0.1,0.9),
-                   (1,10)],      # the bounds on each dimension of x
-                  acq_func="EI",      # the acquisition function
-                  n_calls=15,         # the number of evaluations of f
-                  n_random_starts=5,  # the number of random initialization points
-                  noise=0.1**2,       # the noise level (optional)
-                  random_state=1234)   # the random seed
+res = gp_minimize(efficience_function,  # The function to minimize
+                  [(0.7, 0.9),  # ALFA
+                   (0.2, 0.4),  # BETA
+                   (3,5),     # SLOTFRAME_INTERVAL_SIZE
+                   (0.1, 0.3), # EPSLON_DECAY_RATE
+                   (0.05, 0.1),  # MIN_EPSLON
+                   (90, 100),   # MAX_TX_CELLS_PASSED
+                   (90, 100),   # MAX_RX_CELLS_PASSED
+                   (0.5, 0.9),  # DISCRETIZE_ENERGY_PARAMETER
+                   (1, 10)],    # LAMBDA    
+                  acq_func="LCB",        # The acquisition function
+                  n_calls=args.num_evaluations,  # The number of evaluations of f
+                  n_random_starts=5,   # The number of random initialization points
+                  noise=0.1**2,        # The noise level (optional)
+                  random_state=1234)   # The random seed
 
-print('optimal set of parameters')
+
+print('Optimal set of parameters:')
 print(res.x)
 
-print('best value')
+print('Best value:')
 print(min(res.func_vals))
 
 ax = plot_convergence(res)
