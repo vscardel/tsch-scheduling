@@ -59,7 +59,8 @@ class SchedulingFunctionQlearning(SchedulingFunctionBase):
     prev_rx_ack = 0
 
     #charge estimate variables
-    remaining_battery = 2821500
+    AVERAGE_ENERGY_CONSUMED = 0
+    array_energy_consumed = []
 
     #queue estimate variables
     AVERAGE_QUEUE_SIZE = 0
@@ -120,6 +121,13 @@ class SchedulingFunctionQlearning(SchedulingFunctionBase):
                     self._compute_queue_average_ratio(),
                     self._compute_charge()
                 )
+
+                print('proximo estado discretizado')
+                discrete_state_variables = self.discretize_variables(next_state)
+                discrete_traffic = discrete_state_variables[0]
+                discrete_queue_ratio = discrete_state_variables[1]
+                discrete_energy_left = discrete_state_variables[2]
+                print(discrete_traffic,discrete_queue_ratio,discrete_energy_left)
 
                 self.LAMBDA = self.num_packets_in_current_slotframe / self.SLOTFRAME_INTERVAL_SIZE
               
@@ -399,9 +407,8 @@ class SchedulingFunctionQlearning(SchedulingFunctionBase):
             avg_current_uA = charge/(float(current_asn-asn_synced) * self.settings.tsch_slotDuration)
         else:
             avg_current_uA = 0
-        if avg_current_uA != 0 and self.remaining_battery >= 0:
-            self.remaining_battery = (self.remaining_battery - avg_current_uA)
-            return self.remaining_battery
+        if avg_current_uA != 0:
+            return avg_current_uA
         return 0
     
     def _compute_traffic(self):
@@ -420,6 +427,14 @@ class SchedulingFunctionQlearning(SchedulingFunctionBase):
                 self.array_queue_ratio[:self.SLOTFRAME_INTERVAL_SIZE])/float(self.SLOTFRAME_INTERVAL_SIZE)
             self.array_queue_ratio.pop(0)
         return self.AVERAGE_QUEUE_SIZE
+
+    def _compute_average_energy_ratio(self):
+        self.array_energy_consumed.append(self._compute_charge())
+        if len(self.array_energy_consumed) == self.SLOTFRAME_INTERVAL_SIZE + 1:
+            self.AVERAGE_ENERGY_CONSUMED = sum(
+                self.array_energy_consumed[:self.SLOTFRAME_INTERVAL_SIZE])/float(self.SLOTFRAME_INTERVAL_SIZE)
+            self.array_energy_consumed.pop(0)
+        return self.AVERAGE_ENERGY_CONSUMED
     
     def compute_reward(self,list_state_variables, action):
         state_number = self.map_state_to_number(list_state_variables)
@@ -431,8 +446,9 @@ class SchedulingFunctionQlearning(SchedulingFunctionBase):
             return 1
         return 0
     
-    def compute_discrete_energy_left(self,energy_left):
-        if energy_left >= self.remaining_battery * self.DISCRETIZE_ENERGY_PARAMETER:
+    def discretize_energy(self,energy_left):
+        average_energy_ratio = self._compute_average_energy_ratio()
+        if energy_left > average_energy_ratio:
             return 1
         return 0
 
@@ -448,7 +464,7 @@ class SchedulingFunctionQlearning(SchedulingFunctionBase):
         energy_left = state_list_variables[2]
         discrete_traffic = self.discretize_traffic(traffic)
         discrete_queue_ratio = self.discretize_queue_ratio(queue_ratio)
-        discrete_energy_left = self.compute_discrete_energy_left(energy_left)
+        discrete_energy_left = self.discretize_energy(energy_left)
         return [
             discrete_traffic,
             discrete_queue_ratio,

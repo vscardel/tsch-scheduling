@@ -10,10 +10,10 @@ import numpy as np
 MAX_FUNCTION_VALUE = 100000
 
 max_values = {
-    'latency': 100000,
-    'join_time': 100000,
-    'network_lifetime': 100000,
-    'packet_delivery_ratio': 100000
+    'latency': -1,
+    'join_time': -1,
+    'network_lifetime': -1,
+    'packet_delivery_ratio': -1
 }
 
 min_values = {
@@ -103,7 +103,7 @@ def efficience_function(parameters):
                 os.path.join(
                     'simData', 
                     args.output_folder, 
-                    f'exec_numMotes_{num_motes}.dat.kpi'
+                    'exec_numMotes_{0}.dat.kpi'.format(num_motes)
                 )
             , 'r') as f:
                 json_string = f.read()
@@ -111,7 +111,7 @@ def efficience_function(parameters):
                 break
         except Exception as e:
             print(e)
-            print(f"Something went wrong reading KPIs on try {tentativa}")
+            print("Something went wrong reading KPIs on try {0}".format(tentativa))
                 
     if kpis:
 
