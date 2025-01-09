@@ -42,16 +42,12 @@ class SchedulingFunctionQlearning(SchedulingFunctionBase):
     MAX_EPSLON = 1
 
 
-    reward_table = {
-        (0, 0): -1, (0, 1): 1, (0, 2): 0,
-        (1, 0): -1, (1, 1): 0, (1, 2): 1,
-        (2, 0):  0, (2, 1): 1, (2, 2): 0,
-        (3, 0):  1, (3, 1): -1, (3, 2): -1,
-        (4, 0):  0, (4, 1): -1, (4, 2): 1,
-        (5, 0):  1, (5, 1): -1, (5, 2): 0,
-        (6, 0):  1, (6, 1):  1, (6, 2): 0,
-        (7, 0):  1, (7, 1): -1, (7, 2): 0,
-    }
+    #rewards weigths
+    WQ = 0.33
+    WE = 0.33
+    WT = 0.33
+
+    CUMULATIVE_REWARD = 0
 
     #traffic estimate variables
     TRAFFIC = 0
@@ -59,6 +55,7 @@ class SchedulingFunctionQlearning(SchedulingFunctionBase):
     prev_rx_ack = 0
 
     #charge estimate variables
+    remaining_battery = 2821500
     AVERAGE_ENERGY_CONSUMED = 0
     array_energy_consumed = []
 
@@ -74,6 +71,7 @@ class SchedulingFunctionQlearning(SchedulingFunctionBase):
         self.ALFA = self.settings.ALFA
         self.BETA = self.settings.BETA
         self.EPSLON_DECAY_RATE = self.settings.EPSLON_DECAY_RATE
+        self.EPSLON_THRESHOLD = self.settings.EPSLON_THRESHOLD
         self.MIN_EPSLON = self.settings.MIN_EPSLON
         self.SLOTFRAME_INTERVAL_SIZE = self.settings.SLOTFRAME_INTERVAL_SIZE
         self.MAX_TX_CELLS_PASSED = self.settings.MAX_TX_CELLS_PASSED
@@ -121,6 +119,9 @@ class SchedulingFunctionQlearning(SchedulingFunctionBase):
                     self._compute_queue_average_ratio(),
                     self._compute_charge()
                 )
+                print('CHARGE CHARGE CHARGE')
+                print(self._compute_charge())
+                print(self.remaining_battery)                
 
                 print('proximo estado discretizado')
                 discrete_state_variables = self.discretize_variables(next_state)
@@ -134,7 +135,7 @@ class SchedulingFunctionQlearning(SchedulingFunctionBase):
               
                 distribution = self._compute_poisson_packet_distribution(time_interval=self.SLOTFRAME_INTERVAL_SIZE)
 
-                if self.EPSLON < 0.85:
+                if self.EPSLON < self.EPSLON_THRESHOLD:
                     action = self.return_best_q_action(self.map_state_to_number(self.current_state))
                 else:
                     action = random.choice([0,1,2])
@@ -402,14 +403,21 @@ class SchedulingFunctionQlearning(SchedulingFunctionBase):
         charge += self.mote.radio.stats['sleep'] * d.CHARGE_Sleep_uC
         current_asn = self.engine.getAsn()
         asn_synced = self.mote.tsch.asnLastSync
+        #tempo em s que o dispositivo esta sincronizado
         denominator = (float(current_asn-asn_synced) * self.settings.tsch_slotDuration)
         if denominator != 0:
-            avg_current_uA = charge/(float(current_asn-asn_synced) * self.settings.tsch_slotDuration)
+            avg_current_uA = charge/denominator
         else:
             avg_current_uA = 0
-        if avg_current_uA != 0:
-            return avg_current_uA
-        return 0
+        return avg_current_uA
+    
+    #returns how much of the total battery was consumed
+    def _compute_charge_ratio(self):
+        current_charge_consumed = self._compute_charge()
+        if current_charge_consumed >= self.remaining_battery:
+            return 1
+        else:
+            return float(current_charge_consumed/self.remaining_battery)
     
     def _compute_traffic(self):
         self.array_rxs_acks.append(self.mote.radio.stats["rx_data_tx_ack"] - self.prev_rx_ack)
@@ -434,12 +442,17 @@ class SchedulingFunctionQlearning(SchedulingFunctionBase):
             self.AVERAGE_ENERGY_CONSUMED = sum(
                 self.array_energy_consumed[:self.SLOTFRAME_INTERVAL_SIZE])/float(self.SLOTFRAME_INTERVAL_SIZE)
             self.array_energy_consumed.pop(0)
-        return self.AVERAGE_ENERGY_CONSUMED
+        return self.AVERAGE_ENERGY_CONSUMED,
     
-    def compute_reward(self,list_state_variables, action):
-        state_number = self.map_state_to_number(list_state_variables)
-        return self.reward_table.get((state_number, action), 0)  
-        
+    def normalize(self, number):
+        return 2*number -1  
+    
+    def compute_reward(self):
+        reward = self.WQ*self.normalize(self._compute_queue_average_ratio()) +\
+               self.WE*self.normalize(self._compute_charge_ratio())  +\
+               self.WT*self.discretize_traffic(self._compute_traffic()) 
+        return reward
+    
     def discretize_queue_ratio(self,queue_ratio):
         average_queue_ratio = self._compute_queue_average_ratio()
         if queue_ratio > average_queue_ratio:
@@ -491,7 +504,10 @@ class SchedulingFunctionQlearning(SchedulingFunctionBase):
         curr_state = self.map_state_to_number(list_state_variables)
         next_state = self.map_state_to_number(list_next_state_variables)
         #compute deltaQ
-        reward = self.compute_reward(list_state_variables, action)
+        reward = self.compute_reward()
+        self.cumulative_reward = self.cumulative_reward + 1
+        print('CUMULATIVE REWARD')
+        print(self.cumulative_reward)
         deltaQ = reward + self.BETA * self.return_best_q_value(next_state)
         #compute Q_table[curr_state][action]
         self.Q_table[curr_state][action] = (1 - self.ALFA) * self.Q_table[curr_state][action] + (self.ALFA * deltaQ)

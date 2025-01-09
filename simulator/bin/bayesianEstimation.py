@@ -153,13 +153,15 @@ parser.add_argument('-sf','--sched_function', help='Scheduling function alias', 
 parser.add_argument('-app','--application', help='Application Type', required=True)
 parser.add_argument('-of','--output_folder', help='Output folder name', required=True)
 parser.add_argument('-ne','--num_evaluations', type=int, help='Number of evaluations of efficiency function', required=True)
+parser.add_argument('-af','--aquisition_function', type=str, help='The aquisition function used in gp_minimize', required=True)
+
 
 args = parser.parse_args()
 
 res = gp_minimize(efficience_function,  # The function to minimize
-                  [(0.7, 0.9),  # ALFA
-                   (0.2, 0.4),  # BETA
-                   (3,5),     # SLOTFRAME_INTERVAL_SIZE
+                  [(0.1, 0.9),  # ALFA
+                   (0.1, 0.9),  # BETA
+                   (1,10),     # SLOTFRAME_INTERVAL_SIZE
                    (0.1, 0.3), # EPSLON_DECAY_RATE
                    (0.05, 0.1),  # MIN_EPSLON
                    (90, 100),   # MAX_TX_CELLS_PASSED
@@ -184,4 +186,4 @@ ax.set_title("Optimization Convergence")
 ax.set_xlabel("Number of Evaluations")
 ax.set_ylabel("Minimum Objective Function Value")
 
-plot.savefig("convergence_plot.png")
+plot.savefig("convergence_plot_{0}.png".format(args.aquisition_function))
