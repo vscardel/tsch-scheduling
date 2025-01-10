@@ -79,7 +79,6 @@ class SchedulingFunctionQlearning(SchedulingFunctionBase):
         self.DISCRETIZE_ENERGY_PARAMETER = self.settings.DISCRETIZE_ENERGY_PARAMETER
         self.LAMBDA = self.settings.LAMBDA
 
-
     def start(self):
         slotframe_0 = self.mote.tsch.get_slotframe(0)
         self.mote.tsch.add_slotframe(
@@ -168,6 +167,7 @@ class SchedulingFunctionQlearning(SchedulingFunctionBase):
         self.mote.tsch.delete_slotframe(self.SLOTFRAME_HANDLE)
         self.EPSLON = 0
         self.EPISODE = 0
+        self.CUMULATIVE_REWARD = 0
 
     def indication_neighbor_added(self, neighbor_mac_addr):
         pass # do nothing
@@ -448,9 +448,9 @@ class SchedulingFunctionQlearning(SchedulingFunctionBase):
         return 2*number -1  
     
     def compute_reward(self):
-        reward = self.WQ*self.normalize(self._compute_queue_average_ratio()) +\
+        reward = self.WQ*self.normalize(1 - self._compute_queue_average_ratio()) +\
                self.WE*self.normalize(self._compute_charge_ratio())  +\
-               self.WT*self.discretize_traffic(self._compute_traffic()) 
+               self.WT*self.discretize_traffic(1 - self._compute_traffic()) 
         return reward
     
     def discretize_queue_ratio(self,queue_ratio):

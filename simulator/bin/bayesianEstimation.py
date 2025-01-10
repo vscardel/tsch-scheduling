@@ -164,11 +164,11 @@ res = gp_minimize(efficience_function,  # The function to minimize
                    (1,10),     # SLOTFRAME_INTERVAL_SIZE
                    (0.1, 0.3), # EPSLON_DECAY_RATE
                    (0.05, 0.1),  # MIN_EPSLON
-                   (90, 100),   # MAX_TX_CELLS_PASSED
-                   (90, 100),   # MAX_RX_CELLS_PASSED
+                   (1, 100),   # MAX_TX_CELLS_PASSED
+                   (1, 100),   # MAX_RX_CELLS_PASSED
                    (0.5, 0.9),  # DISCRETIZE_ENERGY_PARAMETER
                    (1, 10)],    # LAMBDA    
-                  acq_func="LCB",        # The acquisition function
+                  acq_func="gp_hedge",        # The acquisition function
                   n_calls=args.num_evaluations,  # The number of evaluations of f
                   n_random_starts=5,   # The number of random initialization points
                   noise=0.1**2,        # The noise level (optional)
