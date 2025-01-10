@@ -270,16 +270,7 @@ class AppBurst(AppBase):
 
 class AppRandom(AppBase):
 
-    """Send a packet periodically
-
-    Intervals are distributed uniformly between (pkPeriod-pkPeriodVar)
-    and (pkPeriod+pkPeriodVar).
-
-    The first timing to send a packet is randomly chosen between [next
-    asn, (next asn + pkPeriod)].
-    """
-
-    MAX_NUM_PACKETS = 100
+    MAX_NUM_PACKETS = 5
 
     def __init__(self, mote, **kwargs):
         super(AppRandom, self).__init__(mote)

@@ -158,10 +158,11 @@ class SimConfig(dict):
             else:
                 log_directory_name = hostname
         else:
-            raise NotImplementedError(
-                u'log_directory_name "{0}" is not supported'.format(
-                    self.log_directory_name
-                )
+            print(self.log_directory_name)
+            log_directory_path = os.path.join(
+                SimSettings.SimSettings.DEFAULT_LOG_ROOT_DIR,
+                self.log_directory_name,
             )
-
+            log_directory_name = self.log_directory_name
+           
         SimConfig._log_directory_name = log_directory_name

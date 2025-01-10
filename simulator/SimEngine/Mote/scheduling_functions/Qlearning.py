@@ -26,37 +26,28 @@ class SchedulingFunctionQlearning(SchedulingFunctionBase):
     QUEUE_OVERFLOW = False
 
     #poisson_computation
-    LAMBDA = 0
     num_packets_in_current_slotframe = 0
 
     #Q-learning
     current_state = (0,0,0)
-    EPSLON = None
-    MAX_EPSLON = 1.0           
-    MIN_EPSLON = 0.05           
-    EPSLON_DECAY_RATE = 0.1
+    EPSLON = None         
     EPISODE = 0
     Q_table = dict()
     num_states = 8
     STATE_SIZE = 3
     ACTION_STATE_SIZE = 3
-    SLOTFRAME_INTERVAL_SIZE = 3
     cumulative_reward = 0
     TX_CELLS_PASSED = 0
     RX_CELLS_PASSED = 0
-    ALFA = 0.9
-    BETA = 0.2
+    MAX_EPSLON = 1
 
-    reward_table = {
-        (0, 0): -1, (0, 1): 1, (0, 2): 0,
-        (1, 0): -1, (1, 1): 0, (1, 2): 1,
-        (2, 0):  0, (2, 1): 1, (2, 2): 0,
-        (3, 0):  1, (3, 1): -1, (3, 2): -1,
-        (4, 0):  0, (4, 1): -1, (4, 2): 1,
-        (5, 0):  1, (5, 1): -1, (5, 2): 0,
-        (6, 0):  1, (6, 1):  1, (6, 2): 0,
-        (7, 0):  1, (7, 1): -1, (7, 2): 0,
-    }
+
+    #rewards weigths
+    WQ = 0.33
+    WE = 0.33
+    WT = 0.33
+
+    CUMULATIVE_REWARD = 0
 
     #traffic estimate variables
     TRAFFIC = 0
@@ -65,18 +56,28 @@ class SchedulingFunctionQlearning(SchedulingFunctionBase):
 
     #charge estimate variables
     remaining_battery = 2821500
+    AVERAGE_ENERGY_CONSUMED = 0
+    array_energy_consumed = []
 
     #queue estimate variables
     AVERAGE_QUEUE_SIZE = 0
     array_queue_ratio = []
-
 
     
     def __init__(self, mote):
         super(SchedulingFunctionQlearning, self).__init__(mote)
         self.locked_slots         = set([])
         self.retry_count          = {}
-        
+        self.ALFA = self.settings.ALFA
+        self.BETA = self.settings.BETA
+        self.EPSLON_DECAY_RATE = self.settings.EPSLON_DECAY_RATE
+        self.EPSLON_THRESHOLD = self.settings.EPSLON_THRESHOLD
+        self.MIN_EPSLON = self.settings.MIN_EPSLON
+        self.SLOTFRAME_INTERVAL_SIZE = self.settings.SLOTFRAME_INTERVAL_SIZE
+        self.MAX_TX_CELLS_PASSED = self.settings.MAX_TX_CELLS_PASSED
+        self.MAX_RX_CELLS_PASSED = self.settings.MAX_RX_CELLS_PASSED
+        self.DISCRETIZE_ENERGY_PARAMETER = self.settings.DISCRETIZE_ENERGY_PARAMETER
+        self.LAMBDA = self.settings.LAMBDA
 
     def start(self):
         slotframe_0 = self.mote.tsch.get_slotframe(0)
@@ -117,13 +118,23 @@ class SchedulingFunctionQlearning(SchedulingFunctionBase):
                     self._compute_queue_average_ratio(),
                     self._compute_charge()
                 )
+                print('CHARGE CHARGE CHARGE')
+                print(self._compute_charge())
+                print(self.remaining_battery)                
+
+                print('proximo estado discretizado')
+                discrete_state_variables = self.discretize_variables(next_state)
+                discrete_traffic = discrete_state_variables[0]
+                discrete_queue_ratio = discrete_state_variables[1]
+                discrete_energy_left = discrete_state_variables[2]
+                print(discrete_traffic,discrete_queue_ratio,discrete_energy_left)
 
                 self.LAMBDA = self.num_packets_in_current_slotframe / self.SLOTFRAME_INTERVAL_SIZE
               
               
                 distribution = self._compute_poisson_packet_distribution(time_interval=self.SLOTFRAME_INTERVAL_SIZE)
 
-                if self.EPSLON < 0.85:
+                if self.EPSLON < self.EPSLON_THRESHOLD:
                     action = self.return_best_q_action(self.map_state_to_number(self.current_state))
                 else:
                     action = random.choice([0,1,2])
@@ -156,6 +167,7 @@ class SchedulingFunctionQlearning(SchedulingFunctionBase):
         self.mote.tsch.delete_slotframe(self.SLOTFRAME_HANDLE)
         self.EPSLON = 0
         self.EPISODE = 0
+        self.CUMULATIVE_REWARD = 0
 
     def indication_neighbor_added(self, neighbor_mac_addr):
         pass # do nothing
@@ -163,7 +175,7 @@ class SchedulingFunctionQlearning(SchedulingFunctionBase):
     def indication_tx_cell_elapsed(self, cell, sent_packet):
         if bool(sent_packet):
             self.TX_CELLS_PASSED = self.TX_CELLS_PASSED + 1
-        if self.TX_CELLS_PASSED % 100 == 0:
+        if self.TX_CELLS_PASSED % self.MAX_TX_CELLS_PASSED == 0:
             self.adapt_to_traffic([d.CELLOPTION_TX])
             self.TX_CELLS_PASSED = 0
         if not self._is_minimal_cell(cell):
@@ -172,7 +184,7 @@ class SchedulingFunctionQlearning(SchedulingFunctionBase):
     def indication_rx_cell_elapsed(self, cell, received_packet):
         if bool(received_packet):
             self.RX_CELLS_PASSED = self.RX_CELLS_PASSED + 1
-        if self.RX_CELLS_PASSED % 100 == 0:
+        if self.RX_CELLS_PASSED % self.MAX_RX_CELLS_PASSED == 0:
             self.adapt_to_traffic([d.CELLOPTION_RX])
             self.RX_CELLS_PASSED = 0
         if not self._is_minimal_cell(cell):
@@ -391,15 +403,21 @@ class SchedulingFunctionQlearning(SchedulingFunctionBase):
         charge += self.mote.radio.stats['sleep'] * d.CHARGE_Sleep_uC
         current_asn = self.engine.getAsn()
         asn_synced = self.mote.tsch.asnLastSync
+        #tempo em s que o dispositivo esta sincronizado
         denominator = (float(current_asn-asn_synced) * self.settings.tsch_slotDuration)
         if denominator != 0:
-            avg_current_uA = charge/(float(current_asn-asn_synced) * self.settings.tsch_slotDuration)
+            avg_current_uA = charge/denominator
         else:
             avg_current_uA = 0
-        if avg_current_uA != 0 and self.remaining_battery >= 0:
-            self.remaining_battery = (self.remaining_battery - avg_current_uA)
-            return self.remaining_battery
-        return 0
+        return avg_current_uA
+    
+    #returns how much of the total battery was consumed
+    def _compute_charge_ratio(self):
+        current_charge_consumed = self._compute_charge()
+        if current_charge_consumed >= self.remaining_battery:
+            return 1
+        else:
+            return float(current_charge_consumed/self.remaining_battery)
     
     def _compute_traffic(self):
         self.array_rxs_acks.append(self.mote.radio.stats["rx_data_tx_ack"] - self.prev_rx_ack)
@@ -417,19 +435,33 @@ class SchedulingFunctionQlearning(SchedulingFunctionBase):
                 self.array_queue_ratio[:self.SLOTFRAME_INTERVAL_SIZE])/float(self.SLOTFRAME_INTERVAL_SIZE)
             self.array_queue_ratio.pop(0)
         return self.AVERAGE_QUEUE_SIZE
+
+    def _compute_average_energy_ratio(self):
+        self.array_energy_consumed.append(self._compute_charge())
+        if len(self.array_energy_consumed) == self.SLOTFRAME_INTERVAL_SIZE + 1:
+            self.AVERAGE_ENERGY_CONSUMED = sum(
+                self.array_energy_consumed[:self.SLOTFRAME_INTERVAL_SIZE])/float(self.SLOTFRAME_INTERVAL_SIZE)
+            self.array_energy_consumed.pop(0)
+        return self.AVERAGE_ENERGY_CONSUMED,
     
-    def compute_reward(self,list_state_variables, action):
-        state_number = self.map_state_to_number(list_state_variables)
-        return self.reward_table.get((state_number, action), 0)  
-        
+    def normalize(self, number):
+        return 2*number -1  
+    
+    def compute_reward(self):
+        reward = self.WQ*self.normalize(1 - self._compute_queue_average_ratio()) +\
+               self.WE*self.normalize(self._compute_charge_ratio())  +\
+               self.WT*self.discretize_traffic(1 - self._compute_traffic()) 
+        return reward
+    
     def discretize_queue_ratio(self,queue_ratio):
         average_queue_ratio = self._compute_queue_average_ratio()
         if queue_ratio > average_queue_ratio:
             return 1
         return 0
     
-    def compute_discrete_energy_left(self,energy_left):
-        if energy_left >= self.remaining_battery / 2:
+    def discretize_energy(self,energy_left):
+        average_energy_ratio = self._compute_average_energy_ratio()
+        if energy_left > average_energy_ratio:
             return 1
         return 0
 
@@ -445,7 +477,7 @@ class SchedulingFunctionQlearning(SchedulingFunctionBase):
         energy_left = state_list_variables[2]
         discrete_traffic = self.discretize_traffic(traffic)
         discrete_queue_ratio = self.discretize_queue_ratio(queue_ratio)
-        discrete_energy_left = self.compute_discrete_energy_left(energy_left)
+        discrete_energy_left = self.discretize_energy(energy_left)
         return [
             discrete_traffic,
             discrete_queue_ratio,
@@ -472,7 +504,10 @@ class SchedulingFunctionQlearning(SchedulingFunctionBase):
         curr_state = self.map_state_to_number(list_state_variables)
         next_state = self.map_state_to_number(list_next_state_variables)
         #compute deltaQ
-        reward = self.compute_reward(list_state_variables, action)
+        reward = self.compute_reward()
+        self.cumulative_reward = self.cumulative_reward + 1
+        print('CUMULATIVE REWARD')
+        print(self.cumulative_reward)
         deltaQ = reward + self.BETA * self.return_best_q_value(next_state)
         #compute Q_table[curr_state][action]
         self.Q_table[curr_state][action] = (1 - self.ALFA) * self.Q_table[curr_state][action] + (self.ALFA * deltaQ)
