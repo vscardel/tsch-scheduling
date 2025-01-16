@@ -48,6 +48,7 @@ class SchedulingFunctionQlearning(SchedulingFunctionBase):
     WT = 0.33
 
     CUMULATIVE_REWARD = 0
+    TD_ERROR = 0
 
     #traffic estimate variables
     TRAFFIC = 0
@@ -508,9 +509,12 @@ class SchedulingFunctionQlearning(SchedulingFunctionBase):
         self.cumulative_reward = self.cumulative_reward + 1
         print('CUMULATIVE REWARD')
         print(self.cumulative_reward)
-        deltaQ = reward + self.BETA * self.return_best_q_value(next_state)
+        temporal_difference = reward + self.BETA * self.return_best_q_value(next_state)
+        self.TD_ERROR = temporal_difference
+        print('TD ERROR')
+        print(self.TD_ERROR)
         #compute Q_table[curr_state][action]
-        self.Q_table[curr_state][action] = (1 - self.ALFA) * self.Q_table[curr_state][action] + (self.ALFA * deltaQ)
+        self.Q_table[curr_state][action] = (1 - self.ALFA) * self.Q_table[curr_state][action] + (self.ALFA * temporal_difference)
     
     def _compute_queue_ratio(self):
         return len(self.mote.tsch.txQueue)/float(self.settings.tsch_tx_queue_size)
