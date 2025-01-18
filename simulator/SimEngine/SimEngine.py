@@ -330,7 +330,8 @@ class DiscreteEventEngine(threading.Thread):
             try:
                 os.makedirs(os.path.dirname(file_path))
                 with open(os.path.join(file_path), 'w') as f:
-                    f.write(json.dumps(self.JSON_SYNC_INFO))
+                    data = json.loads(self.JSON_SYNC_INFO)
+                    json.dump(data, f)
             except OSError as exc: # Guard against race condition
                 if exc.errno != errno.EEXIST:
                     raise
