@@ -103,66 +103,84 @@ class SchedulingFunctionQlearning(SchedulingFunctionBase):
         pass
 
     def adapt_to_traffic(self, cellopt):
-        if not self.mote.dagRoot:
-            preferred_parent = self.mote.rpl.getPreferredParent()
-            if preferred_parent and self.mote.clear_to_send_EBs_DATA():
-                
-                self.EPISODE = self.EPISODE + 1
-                self.EPSLON = self.MIN_EPSLON + (self.MAX_EPSLON - self.MIN_EPSLON)*np.exp(-self.EPSLON_DECAY_RATE*self.EPISODE)
+    # import ipdb;
+    # ipdb.set_trace()
+        preferred_parent = self.mote.rpl.getPreferredParent()
+        if preferred_parent and self.mote.clear_to_send_EBs_DATA():
+            
+            self.EPISODE = self.EPISODE + 1
+            self.EPSLON = self.MIN_EPSLON + (self.MAX_EPSLON - self.MIN_EPSLON)*np.exp(-self.EPSLON_DECAY_RATE*self.EPISODE)
 
-                print("Mote id {0}".format(self.mote.id))
-                print('----------------------')
-                print(self.Q_table)
+            print("Mote id {0}".format(self.mote.id))
+            print('----------------------')
+            print(self.Q_table)
 
-                next_state = (
-                    self._compute_traffic(),
-                    self._compute_queue_average_ratio(),
-                    self._compute_charge()
-                )
-                print('CHARGE CHARGE CHARGE')
-                print(self._compute_charge())
-                print(self.remaining_battery)                
+            next_state = (
+                self._compute_traffic(),
+                self._compute_queue_average_ratio(),
+                self._compute_charge()
+            )
 
-                print('proximo estado discretizado')
-                discrete_state_variables = self.discretize_variables(next_state)
-                discrete_traffic = discrete_state_variables[0]
-                discrete_queue_ratio = discrete_state_variables[1]
-                discrete_energy_left = discrete_state_variables[2]
-                print(discrete_traffic,discrete_queue_ratio,discrete_energy_left)
+            print('proximo estado discretizado')
+            discrete_state_variables = self.discretize_variables(next_state)
+            discrete_traffic = discrete_state_variables[0]
+            discrete_queue_ratio = discrete_state_variables[1]
+            discrete_energy_left = discrete_state_variables[2]
+            print(discrete_traffic,discrete_queue_ratio,discrete_energy_left)
 
-                self.LAMBDA = self.num_packets_in_current_slotframe / self.SLOTFRAME_INTERVAL_SIZE
-              
-              
-                distribution = self._compute_poisson_packet_distribution(time_interval=self.SLOTFRAME_INTERVAL_SIZE)
+            self.LAMBDA = self.num_packets_in_current_slotframe / self.SLOTFRAME_INTERVAL_SIZE
+            
+            
+            distribution = self._compute_poisson_packet_distribution(time_interval=self.SLOTFRAME_INTERVAL_SIZE)
 
-                if self.EPSLON < self.EPSLON_THRESHOLD:
-                    action = self.return_best_q_action(self.map_state_to_number(self.current_state))
-                else:
-                    action = random.choice([0,1,2])
-
-                print('EPSLON')
-                print(self.EPSLON)
-                print('action')
-                print(action)
-
-                if action == 0:
-                    num_packets_to_be_generated = self.compute_num_packets_to_be_generated(distribution)
-                    self.sixp_interface_add(
-                        preferred_parent = preferred_parent,
-                        num_cells        = num_packets_to_be_generated,
-                        cell_option      = cellopt,
-                    )
-                elif action == 1:
-                    num_packets_to_remove = self.compute_num_packets_to_remove(self.LAMBDA, cellopt)
-                    self.sixp_interface_delete(
-                        preferred_parent = preferred_parent,
-                        num_cells        = num_packets_to_remove,
-                        cell_option      = cellopt
-                    )
-                
+            if self.EPSLON < self.EPSLON_THRESHOLD:
+                action = self.return_best_q_action(self.map_state_to_number(self.current_state))
+            else:
+                print('TAKING RANDOM ACTION')
+                action = random.choice([0,1,2])
+                self.take_random_action(preferred_parent, action, cellopt)
                 self.current_state = next_state
                 self.compute_q_table(self.current_state,next_state,action)
+                return
+            
+            print('USING Q-TABLE')
+            print('EPSLON')
+            print(self.EPSLON)
+            print('action')
+            print(action)
+
+            if action == 0:
+                num_packets_to_be_generated = self.compute_num_packets_to_be_generated(distribution)
+                self.sixp_interface_add(
+                    preferred_parent = preferred_parent,
+                    num_cells        = num_packets_to_be_generated,
+                    cell_option      = cellopt,
+                )
+            elif action == 1:
+                num_packets_to_remove = self.compute_num_packets_to_remove(self.LAMBDA, cellopt)
+                self.sixp_interface_delete(
+                    preferred_parent = preferred_parent,
+                    num_cells        = num_packets_to_remove,
+                    cell_option      = cellopt
+                )
+            
+            self.current_state = next_state
+            self.compute_q_table(self.current_state,next_state,action)
         
+    #be more conservative in random actions
+    def take_random_action(self, preferred_parent, action, cellopt):
+        if action == 0:
+            self.sixp_interface_add(
+                preferred_parent = preferred_parent,
+                num_cells        = 1,
+                cell_option      = cellopt,
+            )
+        elif action == 1:
+            self.sixp_interface_delete(
+                preferred_parent = preferred_parent,
+                num_cells        = 1,
+                cell_option      = cellopt
+            )
 
     def stop(self):
         self.mote.tsch.delete_slotframe(self.SLOTFRAME_HANDLE)
@@ -174,22 +192,28 @@ class SchedulingFunctionQlearning(SchedulingFunctionBase):
         pass # do nothing
 
     def indication_tx_cell_elapsed(self, cell, sent_packet):
-        if bool(sent_packet):
-            self.TX_CELLS_PASSED = self.TX_CELLS_PASSED + 1
-        if self.TX_CELLS_PASSED % self.MAX_TX_CELLS_PASSED == 0:
-            self.adapt_to_traffic([d.CELLOPTION_TX])
-            self.TX_CELLS_PASSED = 0
+        if self.mote.dagRoot:
+            return
         if not self._is_minimal_cell(cell):
-            self.num_packets_in_current_slotframe = self.num_packets_in_current_slotframe + 1
+            self.TX_CELLS_PASSED = self.TX_CELLS_PASSED + 1
+            if bool(sent_packet): 
+                self.num_packets_in_current_slotframe = self.num_packets_in_current_slotframe + 1
+            if (self.TX_CELLS_PASSED > 0 and \
+                    self.TX_CELLS_PASSED % self.MAX_TX_CELLS_PASSED == 0):
+                self.adapt_to_traffic([d.CELLOPTION_TX])
+                self.TX_CELLS_PASSED = 0
 
     def indication_rx_cell_elapsed(self, cell, received_packet):
-        if bool(received_packet):
-            self.RX_CELLS_PASSED = self.RX_CELLS_PASSED + 1
-        if self.RX_CELLS_PASSED % self.MAX_RX_CELLS_PASSED == 0:
-            self.adapt_to_traffic([d.CELLOPTION_RX])
-            self.RX_CELLS_PASSED = 0
+        if self.mote.dagRoot:
+            return
         if not self._is_minimal_cell(cell):
-            self.num_packets_in_current_slotframe = self.num_packets_in_current_slotframe + 1
+            self.RX_CELLS_PASSED = self.RX_CELLS_PASSED + 1
+            if bool(received_packet): 
+                self.num_packets_in_current_slotframe = self.num_packets_in_current_slotframe + 1
+            if (self.RX_CELLS_PASSED > 0 and \
+                    self.RX_CELLS_PASSED % self.MAX_TX_CELLS_PASSED == 0):
+                self.adapt_to_traffic([d.CELLOPTION_RX])
+                self.RX_CELLS_PASSED = 0
 
     def indication_queue_full(self):
         self.QUEUE_OVERFLOW = True
