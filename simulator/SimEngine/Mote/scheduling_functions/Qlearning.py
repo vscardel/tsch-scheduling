@@ -49,6 +49,10 @@ class SchedulingFunctionQlearning(SchedulingFunctionBase):
 
     CUMULATIVE_REWARD = 0
     TD_ERROR = 0
+    QLEARNING_STATS = {
+        'TD_ERROR': [],
+        'CUMULATIVE_REWARD': []
+    }
 
     #traffic estimate variables
     TRAFFIC = 0
@@ -77,7 +81,6 @@ class SchedulingFunctionQlearning(SchedulingFunctionBase):
         self.SLOTFRAME_INTERVAL_SIZE = self.settings.SLOTFRAME_INTERVAL_SIZE
         self.MAX_TX_CELLS_PASSED = self.settings.MAX_TX_CELLS_PASSED
         self.MAX_RX_CELLS_PASSED = self.settings.MAX_RX_CELLS_PASSED
-        self.DISCRETIZE_ENERGY_PARAMETER = self.settings.DISCRETIZE_ENERGY_PARAMETER
         self.LAMBDA = self.settings.LAMBDA
 
     def start(self):
@@ -107,7 +110,7 @@ class SchedulingFunctionQlearning(SchedulingFunctionBase):
     # ipdb.set_trace()
         preferred_parent = self.mote.rpl.getPreferredParent()
         if preferred_parent and self.mote.clear_to_send_EBs_DATA():
-            
+            self.save_qlearning_stats()
             self.EPISODE = self.EPISODE + 1
             self.EPSLON = self.MIN_EPSLON + (self.MAX_EPSLON - self.MIN_EPSLON)*np.exp(-self.EPSLON_DECAY_RATE*self.EPISODE)
 
@@ -182,11 +185,20 @@ class SchedulingFunctionQlearning(SchedulingFunctionBase):
                 cell_option      = cellopt
             )
 
+    def save_qlearning_stats(self):
+        self.QLEARNING_STATS['TD_ERROR'].append(self.TD_ERROR)
+        self.QLEARNING_STATS['CUMULATIVE_REWARD'].append(self.CUMULATIVE_REWARD)
+
     def stop(self):
         self.mote.tsch.delete_slotframe(self.SLOTFRAME_HANDLE)
         self.EPSLON = 0
         self.EPISODE = 0
         self.CUMULATIVE_REWARD = 0
+        self.QLEARNING_STATS = {
+            'TD_ERROR': [],
+            'CUMULATIVE_REWARD': []
+        }
+        
 
     def indication_neighbor_added(self, neighbor_mac_addr):
         pass # do nothing

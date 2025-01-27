@@ -6,9 +6,10 @@ from skopt import gp_minimize
 from skopt.plots import plot_convergence
 import matplotlib.pyplot as plot
 import numpy as np
-from sklearn import preprocessing
+import random
 
-MAX_FUNCTION_VALUE = 100000
+MAX_FUNCTION_VALUE = 2
+NUM_RUNS = 0
 
 def convert_types(obj):
     if isinstance(obj, dict):
@@ -30,8 +31,7 @@ parameters_position = {
    "MIN_EPSLON": 4,
    "MAX_TX_CELLS_PASSED": 5,
    "MAX_RX_CELLS_PASSED": 6,
-   "DISCRETIZE_ENERGY_PARAMETER": 7,
-   "LAMBDA": 8
+   "EPSLON_THRESHOLD": 7
 }
 
 metrics_vector_position = {
@@ -42,6 +42,37 @@ metrics_vector_position = {
    "average_sync_nodes_in_simulation": 4
 }
 
+max_values = {
+   "latency": -1,
+   "join_time": -1,
+   "network_lifetime": -1,
+   "packet_delivery_ratio": -1,
+   "average_sync_nodes_in_simulation": -1
+}
+
+min_values = {
+   "latency": 1000000,
+   "join_time": 1000000,
+   "network_lifetime": 1000000,
+   "packet_delivery_ratio": 1000000,
+   "average_sync_nodes_in_simulation": 1000000
+}
+
+weigths = {
+    "latency": 0.2,
+   "join_time": 0.2,
+   "network_lifetime": 0.2,
+   "packet_delivery_ratio": 0.2,
+   "average_sync_nodes_in_simulation": 0.2
+}
+
+def update_min_max_values(name, value):
+    if value > max_values[name]:
+        max_values[name] = value
+    
+    if value < min_values[name]:
+        min_values[name] = value
+
 def remove_results_folder(args):
     shutil.rmtree(        
             os.path.join(
@@ -50,7 +81,19 @@ def remove_results_folder(args):
         )
     )
 
+def normalize_metric(name,value):
+    if max_values[name] == min_values[name]:
+        return 1
+    return (value - min_values[name]) / (max_values[name] - min_values[name])
+
+def normalize(metrics):
+    normalized_metrics = [0] * len(metrics_vector_position)
+    for name,position in metrics_vector_position.items():
+        normalized_metrics[position] = normalize_metric(name, metrics[position])
+    return normalized_metrics
+
 def efficience_function(parameters):
+    global NUM_RUNS
     # import ipdb;
     # ipdb.set_trace()
     global args
@@ -65,6 +108,8 @@ def efficience_function(parameters):
     settings['execution']['numCPUs'] = args.num_cpus
     settings['execution']['numRuns'] = args.num_runs
     settings['settings']['regular']['sf_class'] = args.sched_function
+    settings['settings']['regular']['conn_class'] = args.conn_class
+    settings['settings']['regular']['exec_numSlotframesPerRun'] = args.num_slots
     settings['log_directory_name']= args.output_folder
     settings['get_sync_node_info'] = args.sync_required
 
@@ -120,27 +165,47 @@ def efficience_function(parameters):
         sync_list = [v for k,v in sync_info.items()]
         average_sync_nodes_in_simulation = sum(sync_list)/len(sync_list)
 
-        import ipdb;
-        ipdb.set_trace()
+        update_min_max_values('latency',latency)
+        update_min_max_values('join_time',join_time)
+        update_min_max_values('network_lifetime',network_lifetime)
+        update_min_max_values('packet_delivery_ratio',packet_delivery_ratio)
+        update_min_max_values('average_sync_nodes_in_simulation',average_sync_nodes_in_simulation)
+
+        #first run is only to update min_max values
+        if NUM_RUNS == 0:
+            NUM_RUNS = NUM_RUNS + 1
+            remove_results_folder(args)
+            return MAX_FUNCTION_VALUE
+
+        # import ipdb;
+        # ipdb.set_trace()
         try:
             metrics_vector = [latency, join_time, network_lifetime, packet_delivery_ratio, average_sync_nodes_in_simulation]
             #normalize results
-            normalized_results = preprocessing.normalize([metrics_vector])[0]
+            normalized_results = normalize(metrics_vector)
 
-            score = normalized_results[metrics_vector_position['latency']] - \
-                    normalized_results[metrics_vector_position['join_time']] + \
-                    normalized_results[metrics_vector_position['network_lifetime']]  - \
-                    normalized_results[metrics_vector_position['packet_delivery_ratio']] + \
-                    normalized_results[metrics_vector_position['average_sync_nodes_in_simulation']]
+            score = (1 - normalized_results[metrics_vector_position['latency']] )* weigths['latency'] + \
+                    (1 - normalized_results[metrics_vector_position['join_time']]) * weigths['join_time']  + \
+                    normalized_results[metrics_vector_position['network_lifetime']] * weigths['network_lifetime']  + \
+                    normalized_results[metrics_vector_position['packet_delivery_ratio']] * weigths['packet_delivery_ratio'] + \
+                    normalized_results[metrics_vector_position['average_sync_nodes_in_simulation']]* weigths['average_sync_nodes_in_simulation'] 
         except Exception as e:
+            print(e)
             print('Failed to calculate score. Returning infinity.')
             return MAX_FUNCTION_VALUE
         
         # Remove results folder
         remove_results_folder(args)
+        NUM_RUNS = NUM_RUNS + 1
 
-        return score
+        print('SCORE')
+        if score != 0:
+            print(1 / score)
+            return 1 / score
+        else:
+            return MAX_FUNCTION_VALUE
     else:
+        NUM_RUNS = NUM_RUNS + 1
         return MAX_FUNCTION_VALUE
 
 parser = argparse.ArgumentParser()
@@ -154,6 +219,10 @@ parser.add_argument('-of','--output_folder', help='Output folder name', required
 parser.add_argument('-ne','--num_evaluations', type=int, help='Number of evaluations of efficiency function', required=True)
 parser.add_argument('-af','--aquisition_function', type=str, help='The aquisition function used in gp_minimize', required=False)
 parser.add_argument('-sr','--sync_required', type=bool, help='if sync info is obtained in simulation', required=True)
+parser.add_argument('-nrs','--num_random_starts', type=int, help='num random starts of gp.minimize', required=True)
+parser.add_argument('-cc','--conn_class', type=str, help='connectivity_matrix', required=True)
+parser.add_argument('-nslots','--num_slots', type=int, help='number of slotframes (time) of simulation', required=True)
+
 
 
 
@@ -162,29 +231,39 @@ args = parser.parse_args()
 res = gp_minimize(efficience_function,  # The function to minimize
                   [(0.1, 0.9),  # ALFA
                    (0.1, 0.9),  # BETA
-                   (1,10),     # SLOTFRAME_INTERVAL_SIZE
+                   (5,10),     # SLOTFRAME_INTERVAL_SIZE
                    (0.1, 0.3), # EPSLON_DECAY_RATE
                    (0.05, 0.1),  # MIN_EPSLON
-                   (1, 100),   # MAX_TX_CELLS_PASSED
-                   (1, 100),   # MAX_RX_CELLS_PASSED
-                   (0.5, 0.9),  # DISCRETIZE_ENERGY_PARAMETER
-                   (1, 10)],    # LAMBDA    
-                  acq_func="gp_hedge",        # The acquisition function
+                   (50, 100),   # MAX_TX_CELLS_PASSED
+                   (50, 100),   # MAX_RX_CELLS_PASSED
+                   (0.5, 1)],    # EPSLON_THRESHOLD   
+                  acq_func="gp_hedge",       # The acquisition function
                   n_calls=args.num_evaluations,  # The number of evaluations of f
-                  n_random_starts=1,   # The number of random initialization points
+                  n_random_starts=args.num_random_starts,   # The number of random initialization points
                   noise=0.1**2,        # The noise level (optional)
                   random_state=1234)   # The random seed
 
 
-print('Optimal set of parameters:')
-print(res.x)
+print('Optimal set of parameters\n')
+for i,paramater in enumerate(parameters_position):
+    current_value = res.x[i]
+    print('{0}: {1}\n'.format(paramater, current_value))
 
-print('Best value:')
-print(min(res.func_vals))
+print('Best value: {0}'.format(min(res.func_vals)))
 
 ax = plot_convergence(res)
+
+ymin, ymax = ax.get_ylim()
+if ymax - ymin > 1e4:  
+    ax.set_yscale("log")  
+else:
+    ax.set_ylim(ymin, ymax)  
+
 ax.set_title("Optimization Convergence")
 ax.set_xlabel("Number of Evaluations")
 ax.set_ylabel("Minimum Objective Function Value")
 
-plot.savefig("convergence_plot_{0}.png".format(args.aquisition_function))
+# Exibe o grafico
+plot.tight_layout() 
+random_num = random.randint(1,50)
+plot.savefig("convergence_plot{0}.png".format(random_num))
