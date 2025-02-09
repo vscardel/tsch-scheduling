@@ -23,24 +23,24 @@ def convert_types(obj):
     else:
         return obj
 
-parameters_position = {
-   "ALFA": 0,
-   "BETA": 1,
-   "SLOTFRAME_INTERVAL_SIZE": 2,
-   "EPSLON_DECAY_RATE": 3,
-   "MIN_EPSLON": 4,
-   "MAX_TX_CELLS_PASSED": 5,
-   "MAX_RX_CELLS_PASSED": 6,
-   "EPSLON_THRESHOLD": 7
-}
+parameters_position = [
+   "ALFA",
+   "BETA",
+   "SLOTFRAME_INTERVAL_SIZE",
+   "EPSLON_DECAY_RATE",
+   "MIN_EPSLON",
+   "MAX_TX_CELLS_PASSED",
+   "MAX_RX_CELLS_PASSED",
+   "EPSLON_THRESHOLD"
+]
 
-metrics_vector_position = {
-   "latency": 0,
-   "join_time": 1,
-   "network_lifetime": 2,
-   "packet_delivery_ratio": 3,
-   "average_sync_nodes_in_simulation": 4
-}
+metrics_vector_position = [
+   "latency",
+   "join_time",
+   "network_lifetime",
+   "packet_delivery_ratio",
+   "average_sync_nodes_in_simulation"
+]
 
 max_values = {
    "latency": -1,
@@ -88,7 +88,7 @@ def normalize_metric(name,value):
 
 def normalize(metrics):
     normalized_metrics = [0] * len(metrics_vector_position)
-    for name,position in metrics_vector_position.items():
+    for position,name in enumerate(metrics_vector_position):
         normalized_metrics[position] = normalize_metric(name, metrics[position])
     return normalized_metrics
 
@@ -114,7 +114,7 @@ def efficience_function(parameters):
     settings['get_sync_node_info'] = args.sync_required
 
     # Configure simulator with the parameters
-    for parameter_name, position in parameters_position.items():
+    for position, parameter_name in enumerate(parameters_position):
         parameter_value = parameters[position]
         settings['settings']['regular'][parameter_name] = parameter_value
 
@@ -184,14 +184,15 @@ def efficience_function(parameters):
             #normalize results
             normalized_results = normalize(metrics_vector)
 
-            score = (1 - normalized_results[metrics_vector_position['latency']] )* weigths['latency'] + \
-                    (1 - normalized_results[metrics_vector_position['join_time']]) * weigths['join_time']  + \
-                    normalized_results[metrics_vector_position['network_lifetime']] * weigths['network_lifetime']  + \
-                    normalized_results[metrics_vector_position['packet_delivery_ratio']] * weigths['packet_delivery_ratio'] + \
-                    normalized_results[metrics_vector_position['average_sync_nodes_in_simulation']]* weigths['average_sync_nodes_in_simulation'] 
+            score = (1 - normalized_results[0] )* weigths['latency'] + \
+                    (1 - normalized_results[1]) * weigths['join_time']  + \
+                    normalized_results[2] * weigths['network_lifetime']  + \
+                    normalized_results[3] * weigths['packet_delivery_ratio'] + \
+                    normalized_results[4]* weigths['average_sync_nodes_in_simulation'] 
         except Exception as e:
             print(e)
             print('Failed to calculate score. Returning infinity.')
+            remove_results_folder(args)
             return MAX_FUNCTION_VALUE
         
         # Remove results folder
@@ -201,6 +202,8 @@ def efficience_function(parameters):
         print('SCORE')
         if score != 0:
             print(1 / score)
+            # import ipdb;
+            # ipdb.set_trace()
             return 1 / score
         else:
             return MAX_FUNCTION_VALUE
@@ -236,12 +239,11 @@ res = gp_minimize(efficience_function,  # The function to minimize
                    (0.05, 0.1),  # MIN_EPSLON
                    (50, 100),   # MAX_TX_CELLS_PASSED
                    (50, 100),   # MAX_RX_CELLS_PASSED
-                   (0.5, 1)],    # EPSLON_THRESHOLD   
+                   (0.0, 0.5)],    # EPSLON_THRESHOLD   
                   acq_func="gp_hedge",       # The acquisition function
                   n_calls=args.num_evaluations,  # The number of evaluations of f
                   n_random_starts=args.num_random_starts,   # The number of random initialization points
-                  noise=0.1**2,        # The noise level (optional)
-                  random_state=1234)   # The random seed
+                  random_state=random.randint(1000,2000))   # The random seed
 
 
 print('Optimal set of parameters\n')
@@ -253,17 +255,11 @@ print('Best value: {0}'.format(min(res.func_vals)))
 
 ax = plot_convergence(res)
 
-ymin, ymax = ax.get_ylim()
-if ymax - ymin > 1e4:  
-    ax.set_yscale("log")  
-else:
-    ax.set_ylim(ymin, ymax)  
 
 ax.set_title("Optimization Convergence")
 ax.set_xlabel("Number of Evaluations")
 ax.set_ylabel("Minimum Objective Function Value")
 
 # Exibe o grafico
-plot.tight_layout() 
 random_num = random.randint(1,50)
 plot.savefig("convergence_plot{0}.png".format(random_num))
