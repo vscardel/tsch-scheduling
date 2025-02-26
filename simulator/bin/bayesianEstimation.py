@@ -4,12 +4,13 @@ import os
 import shutil
 from skopt import gp_minimize
 from skopt.plots import plot_convergence
-import matplotlib.pyplot as plot
+import matplotlib.pyplot as plt
 import numpy as np
 import random
 
-MAX_FUNCTION_VALUE = 2
+MAX_FUNCTION_VALUE = 1
 NUM_RUNS = 0
+ALL_SCORES = []
 
 def convert_types(obj):
     if isinstance(obj, dict):
@@ -23,14 +24,22 @@ def convert_types(obj):
     else:
         return obj
 
+# parameters_position = [
+#    "ALFA",
+#    "BETA",
+#    "SLOTFRAME_INTERVAL_SIZE",
+#    "EPSLON_DECAY_RATE",
+#    "MIN_EPSLON",
+#    "MAX_TX_CELLS_PASSED",
+#    "MAX_RX_CELLS_PASSED",
+#    "EPSLON_THRESHOLD"
+# ]
+
 parameters_position = [
    "ALFA",
    "BETA",
-   "SLOTFRAME_INTERVAL_SIZE",
    "EPSLON_DECAY_RATE",
    "MIN_EPSLON",
-   "MAX_TX_CELLS_PASSED",
-   "MAX_RX_CELLS_PASSED",
    "EPSLON_THRESHOLD"
 ]
 
@@ -39,7 +48,6 @@ metrics_vector_position = [
    "join_time",
    "network_lifetime",
    "packet_delivery_ratio",
-   "average_sync_nodes_in_simulation"
 ]
 
 max_values = {
@@ -47,7 +55,6 @@ max_values = {
    "join_time": -1,
    "network_lifetime": -1,
    "packet_delivery_ratio": -1,
-   "average_sync_nodes_in_simulation": -1
 }
 
 min_values = {
@@ -55,7 +62,6 @@ min_values = {
    "join_time": 1000000,
    "network_lifetime": 1000000,
    "packet_delivery_ratio": 1000000,
-   "average_sync_nodes_in_simulation": 1000000
 }
 
 weigths = {
@@ -93,15 +99,23 @@ def normalize(metrics):
     return normalized_metrics
 
 def efficience_function(parameters):
-    global NUM_RUNS
+    global NUM_RUNS, ALL_SCORES
     # import ipdb;
     # ipdb.set_trace()
     global args
 
     settings = None
 
-    with open('config.json','r') as f:
-        json_string = f.read()
+    config_name = 'config_{0}.json'.format(args.output_folder)
+    try:
+        with open(config_name,'r') as f:
+            json_string = f.read()
+            settings = json.loads(json_string)
+    except IOError as err:
+        with open('config.json', 'r') as f:
+            json_string = f.read() 
+        with open(config_name, 'w') as f:
+            f.write(json_string)
         settings = json.loads(json_string)
 
     settings['settings']['combination']['exec_numMotes'] = args.combinations
@@ -158,37 +172,37 @@ def efficience_function(parameters):
                 
     if kpis and sync_info:
 
+
         latency = kpis['0']['global-stats']['e2e-upstream-latency'][0]['mean']
         join_time = kpis['0']['global-stats']["joining-time"][0]['mean']
         network_lifetime = kpis['0']['global-stats']['network_lifetime'][0]['min']
         packet_delivery_ratio = kpis['0']['global-stats']['e2e-upstream-delivery'][0]['value']
         sync_list = [v for k,v in sync_info.items()]
-        average_sync_nodes_in_simulation = sum(sync_list)/len(sync_list)
 
         update_min_max_values('latency',latency)
         update_min_max_values('join_time',join_time)
         update_min_max_values('network_lifetime',network_lifetime)
         update_min_max_values('packet_delivery_ratio',packet_delivery_ratio)
-        update_min_max_values('average_sync_nodes_in_simulation',average_sync_nodes_in_simulation)
 
         #first run is only to update min_max values
         if NUM_RUNS == 0:
             NUM_RUNS = NUM_RUNS + 1
             remove_results_folder(args)
+            ALL_SCORES.append(MAX_FUNCTION_VALUE)
             return MAX_FUNCTION_VALUE
 
         # import ipdb;
         # ipdb.set_trace()
         try:
-            metrics_vector = [latency, join_time, network_lifetime, packet_delivery_ratio, average_sync_nodes_in_simulation]
+            metrics_vector = [latency, join_time, network_lifetime, packet_delivery_ratio]
             #normalize results
             normalized_results = normalize(metrics_vector)
 
             score = (1 - normalized_results[0] )* weigths['latency'] + \
                     (1 - normalized_results[1]) * weigths['join_time']  + \
                     normalized_results[2] * weigths['network_lifetime']  + \
-                    normalized_results[3] * weigths['packet_delivery_ratio'] + \
-                    normalized_results[4]* weigths['average_sync_nodes_in_simulation'] 
+                    normalized_results[3] * weigths['packet_delivery_ratio'] 
+                    
         except Exception as e:
             print(e)
             print('Failed to calculate score. Returning infinity.')
@@ -199,12 +213,11 @@ def efficience_function(parameters):
         remove_results_folder(args)
         NUM_RUNS = NUM_RUNS + 1
 
-        print('SCORE')
         if score != 0:
-            print(1 / score)
             # import ipdb;
             # ipdb.set_trace()
-            return 1 / score
+            ALL_SCORES.append(1-score)
+            return 1 - score
         else:
             return MAX_FUNCTION_VALUE
     else:
@@ -234,16 +247,13 @@ args = parser.parse_args()
 res = gp_minimize(efficience_function,  # The function to minimize
                   [(0.1, 0.9),  # ALFA
                    (0.1, 0.9),  # BETA
-                   (5,10),     # SLOTFRAME_INTERVAL_SIZE
-                   (0.1, 0.3), # EPSLON_DECAY_RATE
+                #    (5,10),     # SLOTFRAME_INTERVAL_SIZE
+                   (0.001, 0.005), # EPSLON_DECAY_RATE
                    (0.05, 0.1),  # MIN_EPSLON
-                   (50, 100),   # MAX_TX_CELLS_PASSED
-                   (50, 100),   # MAX_RX_CELLS_PASSED
-                   (0.0, 0.5)],    # EPSLON_THRESHOLD   
-                  acq_func="gp_hedge",       # The acquisition function
-                  n_calls=args.num_evaluations,  # The number of evaluations of f
-                  n_random_starts=args.num_random_starts,   # The number of random initialization points
-                  random_state=random.randint(1000,2000))   # The random seed
+                #    (50, 100),   # MAX_TX_CELLS_PASSED
+                #    (50, 100),   # MAX_RX_CELLS_PASSED
+                   (0.5, 0.7)]    # EPSLON_THRESHOLD   
+            )
 
 
 print('Optimal set of parameters\n')
@@ -253,13 +263,21 @@ for i,paramater in enumerate(parameters_position):
 
 print('Best value: {0}'.format(min(res.func_vals)))
 
+ys = ALL_SCORES
+xs = [i for i in range(len(ALL_SCORES))]  # Evaluation numbers (x-axis)
+
+my_plot = plt.plot(xs, ys ,color='red', linewidth=2)
+plt.scatter(xs, ys, color='red', s=50, edgecolors='black', zorder=3)
+plt.title("Optimization Convergence")
+plt.xlabel("Number of Evaluations")
+plt.ylabel("Minimum Objective Function Value")
+plt.xticks(range(0, len(ALL_SCORES), 1))  
+random_num = random.randint(1, 50)
+plt.savefig("all_values_convergence{0}.png".format(random_num))
+
 ax = plot_convergence(res)
-
-
 ax.set_title("Optimization Convergence")
 ax.set_xlabel("Number of Evaluations")
 ax.set_ylabel("Minimum Objective Function Value")
+plt.savefig("convergence_plot{0}.png".format(random_num))
 
-# Exibe o grafico
-random_num = random.randint(1,50)
-plot.savefig("convergence_plot{0}.png".format(random_num))
