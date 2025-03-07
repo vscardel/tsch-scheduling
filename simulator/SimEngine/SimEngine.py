@@ -20,6 +20,8 @@ import threading
 import time
 import traceback
 import json
+import os
+import errno
 
 from . import Mote
 from . import SimSettings
@@ -37,6 +39,10 @@ class DiscreteEventEngine(threading.Thread):
     _instance      = None
     _init          = False
     SLOTFRAME_PERIOD_SIZE = 1
+
+    simconfig = SimConfig.SimConfig(configfile='config.json')
+
+    JSON_SYNC_INFO = None
 
     def __new__(cls, *args, **kwargs):
         if not cls._instance:
@@ -316,6 +322,55 @@ class DiscreteEventEngine(threading.Thread):
 
     # ======================== private ========================================
 
+    def _save_sync_info(self):
+
+        file_path = '../bin/simData/{0}/exec_numMotes_{1}/run_{2}/sync_info.json'.format(self.simconfig.log_directory_name, len(self.motes), self.run_id)
+
+        if not os.path.exists(os.path.dirname(file_path)):
+            try:
+                os.makedirs(os.path.dirname(file_path))
+                with open(os.path.join(file_path), 'w') as f:
+                    data = json.loads(self.JSON_SYNC_INFO)
+                    json.dump(data, f)
+            except OSError as exc: # Guard against race condition
+                if exc.errno != errno.EEXIST:
+                    raise
+    
+    def save_qlearning_stats(self):
+        for mote in self.motes:
+            self._save_qlearning_mote_stat(mote)
+
+    def _save_qlearning_mote_stat(self, mote):
+        current_id = mote.id
+        file_path = '../bin/simData/{0}/exec_numMotes_{1}/run_{2}/{3}/qlearning_stats.json'.format(self.simconfig.log_directory_name, len(self.motes), self.run_id, current_id)
+        if not os.path.exists(os.path.dirname(file_path)):
+            try:
+                os.makedirs(os.path.dirname(file_path))
+                with open(os.path.join(file_path), 'w') as f:
+                    json.dump(mote.sf.QLEARNING_STATS, f)
+            except OSError as exc: # Guard against race condition
+                if exc.errno != errno.EEXIST:
+                    raise
+
+    def _get_sync_node_info(self, slotframe_iteration):
+        #store number of sync nodes
+        file_path = '../bin/simData/{0}/exec_numMotes_{1}/run_{2}/sync_info.json'.format(self.simconfig.log_directory_name, len(self.motes), self.run_id)
+        num_sync_nodes = 0
+        for mote in self.motes:
+            if mote.tsch.isSync:
+                num_sync_nodes = num_sync_nodes + 1
+
+        if not self.JSON_SYNC_INFO:
+            self.JSON_SYNC_INFO = '{\n'
+        else:
+            if slotframe_iteration != self.settings.exec_numSlotframesPerRun-1:
+                self.JSON_SYNC_INFO += '\t"{0}":{1},\n'.format(slotframe_iteration,num_sync_nodes)
+            else:
+                self.JSON_SYNC_INFO += '\t"{0}":{1}\n'.format(slotframe_iteration,num_sync_nodes)
+                self.JSON_SYNC_INFO += '}'
+
+        num_sync_nodes = 0
+
     def _actionPauseSim(self):
         assert self.simPaused==False
         self.simPaused = True
@@ -327,11 +382,20 @@ class DiscreteEventEngine(threading.Thread):
             self.pauseSem.release()
 
     def _actionEndSim(self):
+        if self.simconfig.get_sync_node_info:
+            self._save_sync_info()
+            self.save_qlearning_stats()
         with self.dataLock:
             self.goOn = False
 
     def _actionEndSlotframe(self):
         """Called at each end of slotframe_iteration."""
+
+        slotframe_iteration = int(old_div(self.asn, self.settings.tsch_slotframeLength))
+
+        #store number of sync nodes
+        if self.simconfig.get_sync_node_info:
+            self._get_sync_node_info(slotframe_iteration)
 
         #time to notify scheduling function
         if self.slotframe_period_count == self.SLOTFRAME_PERIOD_SIZE-1:
@@ -340,7 +404,6 @@ class DiscreteEventEngine(threading.Thread):
             self.slotframe_period_count = 0
         else:
             self.slotframe_period_count = self.slotframe_period_count + 1
-        slotframe_iteration = int(old_div(self.asn, self.settings.tsch_slotframeLength))
 
         # print
         if self.verbose:
