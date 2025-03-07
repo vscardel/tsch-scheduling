@@ -117,9 +117,8 @@ class SchedulingFunctionQlearning(SchedulingFunctionBase):
             if self.EPISODE % 100 == 0:
                 self.save_qlearning_stats()
             self.EPSLON = self.MIN_EPSLON + (self.MAX_EPSLON - self.MIN_EPSLON)*np.exp(-self.EPSLON_DECAY_RATE*self.EPISODE)
-            if self.mote.id == 1:
-                print('EPISODE: {0}'.format(self.EPISODE))
-                print('EPSLON: {0}'.format(self.EPSLON))
+            print('EPISODE: {0}'.format(self.EPISODE))
+            print('EPSLON: {0}'.format(self.EPSLON))
 
             # print("Mote id {0}".format(self.mote.id))
             # print('----------------------')
@@ -131,12 +130,12 @@ class SchedulingFunctionQlearning(SchedulingFunctionBase):
                 self._compute_charge()
             )
 
-            # print('proximo estado discretizado')
+            print('proximo estado discretizado')
             discrete_state_variables = self.discretize_variables(next_state)
             discrete_traffic = discrete_state_variables[0]
             discrete_queue_ratio = discrete_state_variables[1]
             discrete_energy_left = discrete_state_variables[2]
-            # print(discrete_traffic,discrete_queue_ratio,discrete_energy_left)
+            print(discrete_traffic,discrete_queue_ratio,discrete_energy_left)
 
             self.LAMBDA = self.num_packets_in_current_slotframe / self.SLOTFRAME_INTERVAL_SIZE
             
@@ -144,9 +143,10 @@ class SchedulingFunctionQlearning(SchedulingFunctionBase):
             distribution = self._compute_poisson_packet_distribution(time_interval=self.SLOTFRAME_INTERVAL_SIZE)
 
             if self.EPSLON < self.EPSLON_THRESHOLD:
+                print('USING THE TABLE')
                 action = self.return_best_q_action(self.map_state_to_number(self.current_state))
             else:
-                # print('TAKING RANDOM ACTION')
+                print('TAKING RANDOM ACTION')
                 action = random.choice([0,1,2])
                 self.take_random_action(preferred_parent, action, cellopt)
                 self.current_state = next_state

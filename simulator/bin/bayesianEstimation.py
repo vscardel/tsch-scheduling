@@ -253,8 +253,6 @@ res = gp_minimize(efficience_function,  # The function to minimize
                 #    (50, 100),   # MAX_TX_CELLS_PASSED
                 #    (50, 100),   # MAX_RX_CELLS_PASSED
                    (0.5, 0.7)],   # EPSLON_THRESHOLD   
-                    n_calls=5,         # the number of evaluations of f
-                    n_random_starts=1, 
             )
 
 
@@ -273,9 +271,6 @@ print('Best value: {0}'.format(min(res.func_vals)))
 ys = ALL_SCORES
 xs = [i+1 for i in range(len(ALL_SCORES))]  # Evaluation numbers (x-axis)
 
-import ipdb;
-ipdb.set_trace()
-
 my_plot = plt.plot(xs, ys ,color='red', linewidth=2)
 plt.scatter(xs, ys, color='red', s=50, edgecolors='black', zorder=3)
 plt.title("Optimization Convergence")
@@ -285,12 +280,9 @@ plt.xticks(range(1, len(ALL_SCORES)+1, 1))
 random_num = random.randint(1, 50)
 plt.savefig("all_values_convergence{0}.png".format(random_num))
 
-import ipdb;
-ipdb.set_trace()
 ax = plot_convergence(res)
 ax.set_title("Optimization Convergence")
 ax.set_xlabel("Number of Evaluations")
 ax.set_ylabel("Minimum Objective Function Value")
-
 plt.savefig("convergence_plot{0}.png".format(random_num))
 
