@@ -6,10 +6,11 @@ import SimEngine
 import netaddr
 import itertools
 import numpy as np
+
 from .. import MoteDefines as d
 from math import factorial as fat
 from math import e
-
+from pprint import pprint
 from SimEngine.Mote.sfBase import SchedulingFunctionBase
 
 
@@ -32,13 +33,9 @@ class SchedulingFunctionQlearning(SchedulingFunctionBase):
     EPSLON = None         
     EPISODE = 0
     Q_table = dict()
-    num_states = 8
-    STATE_SIZE = 3
-    ACTION_STATE_SIZE = 3
     TX_CELLS_PASSED = 0
     RX_CELLS_PASSED = 0
     MAX_EPSLON = 1
-
 
     #rewards weigths
     WQ = 0.33
@@ -82,9 +79,21 @@ class SchedulingFunctionQlearning(SchedulingFunctionBase):
         self.SLOTFRAME_INTERVAL_SIZE = self.settings.SLOTFRAME_INTERVAL_SIZE
         self.MAX_TX_CELLS_PASSED = self.settings.MAX_TX_CELLS_PASSED
         self.MAX_RX_CELLS_PASSED = self.settings.MAX_RX_CELLS_PASSED
+        self.STATE_SIZE = self.settings.STATE_SIZE
+        self.ACTION_STATE_SIZE = self.settings.ACTION_STATE_SIZE
         self.LAMBDA = self.settings.LAMBDA
 
     def start(self):
+        self.name_to_compute_factor = {
+            "traffic": self._compute_traffic,
+            "queue": self._compute_queue_ratio,
+            "charge": self._compute_charge,
+         }
+        self.name_to_discretize_function = {
+            "traffic": self.discretize_traffic,
+            "queue": self.discretize_queue_ratio,
+            "charge": self.discretize_energy,
+         }
         slotframe_0 = self.mote.tsch.get_slotframe(0)
         self.mote.tsch.add_slotframe(
             slotframe_handle = self.SLOTFRAME_HANDLE,
@@ -117,28 +126,17 @@ class SchedulingFunctionQlearning(SchedulingFunctionBase):
             if self.EPISODE % 100 == 0:
                 self.save_qlearning_stats()
             self.EPSLON = self.MIN_EPSLON + (self.MAX_EPSLON - self.MIN_EPSLON)*np.exp(-self.EPSLON_DECAY_RATE*self.EPISODE)
-            print('EPISODE: {0}'.format(self.EPISODE))
-            print('EPSLON: {0}'.format(self.EPSLON))
+            # print('EPISODE: {0}'.format(self.EPISODE))
+            # print('EPSLON: {0}'.format(self.EPSLON))
+
 
             # print("Mote id {0}".format(self.mote.id))
             # print('----------------------')
             # print(self.Q_table)
-
-            next_state = (
-                self._compute_traffic(),
-                self._compute_queue_average_ratio(),
-                self._compute_charge()
-            )
-
-            print('proximo estado discretizado')
-            discrete_state_variables = self.discretize_variables(next_state)
-            discrete_traffic = discrete_state_variables[0]
-            discrete_queue_ratio = discrete_state_variables[1]
-            discrete_energy_left = discrete_state_variables[2]
-            print(discrete_traffic,discrete_queue_ratio,discrete_energy_left)
+            
+            next_state = self.compute_next_state(self.settings.factorial_combinations)
 
             self.LAMBDA = self.num_packets_in_current_slotframe / self.SLOTFRAME_INTERVAL_SIZE
-            
             
             distribution = self._compute_poisson_packet_distribution(time_interval=self.SLOTFRAME_INTERVAL_SIZE)
 
@@ -191,6 +189,19 @@ class SchedulingFunctionQlearning(SchedulingFunctionBase):
                 num_cells        = 1,
                 cell_option      = cellopt
             )
+
+    def compute_next_state(self, factorial_combinations):
+        state = {}
+        for combination in factorial_combinations:
+            my_function = self.return_function_by_name(combination, self.name_to_compute_factor)
+            factor = my_function()
+            state[combination] = factor
+        return state
+    
+
+    def return_function_by_name(self, function_name, function_names):
+        function_name = function_names.get(function_name)
+        return function_name
 
     def save_qlearning_stats(self):
         self.QLEARNING_STATS['AVERAGE_TD_ERROR'].append(self.AVERAGE_TD_ERROR_100)
@@ -375,8 +386,8 @@ class SchedulingFunctionQlearning(SchedulingFunctionBase):
             all_states.append(tuple_seq)
         return all_states
     
-    def initialize_q_table(self,state_size,action_space_size):
-        for state in range(self.num_states):
+    def initialize_q_table(self, num_states, action_space_size):
+        for state in range(num_states):
             self.Q_table[state] = [0]*action_space_size
 
     #utility methods#
@@ -457,6 +468,9 @@ class SchedulingFunctionQlearning(SchedulingFunctionBase):
             avg_current_uA = 0
         return avg_current_uA
     
+    def _compute_queue_ratio(self):
+        return len(self.mote.tsch.txQueue)/float(self.settings.tsch_tx_queue_size)
+    
     #returns how much of the total battery was consumed
     def _compute_charge_ratio(self):
         current_charge_consumed = self._compute_charge()
@@ -464,78 +478,82 @@ class SchedulingFunctionQlearning(SchedulingFunctionBase):
             return 1
         else:
             return float(current_charge_consumed/self.remaining_battery)
-    
+        
     def _compute_traffic(self):
-        self.array_rxs_acks.append(self.mote.radio.stats["rx_data_tx_ack"] - self.prev_rx_ack)
+        current_traffic = self.mote.radio.stats["rx_data_tx_ack"] - self.prev_rx_ack
         self.prev_rx_ack = self.mote.radio.stats["rx_data_tx_ack"]
+        return current_traffic
+
+    def _compute_average_traffic(self, current_traffic):
+        self.array_rxs_acks.append(current_traffic)
         if len(self.array_rxs_acks) == self.SLOTFRAME_INTERVAL_SIZE + 1:
             self.TRAFFIC = sum(
                 self.array_rxs_acks[:self.SLOTFRAME_INTERVAL_SIZE])/float(self.SLOTFRAME_INTERVAL_SIZE)
             self.array_rxs_acks.pop(0)
         return self.TRAFFIC
     
-    def _compute_queue_average_ratio(self):
-        self.array_queue_ratio.append(self._compute_queue_ratio())
+    def _compute_queue_average_ratio(self, current_queue_ratio):
+        self.array_queue_ratio.append(current_queue_ratio)
         if len(self.array_queue_ratio) == self.SLOTFRAME_INTERVAL_SIZE + 1:
             self.AVERAGE_QUEUE_SIZE = sum(
                 self.array_queue_ratio[:self.SLOTFRAME_INTERVAL_SIZE])/float(self.SLOTFRAME_INTERVAL_SIZE)
             self.array_queue_ratio.pop(0)
         return self.AVERAGE_QUEUE_SIZE
 
-    def _compute_average_energy_ratio(self):
-        self.array_energy_consumed.append(self._compute_charge())
+    def _compute_average_energy_ratio(self, current_energy_ratio):
+        self.array_energy_consumed.append(current_energy_ratio)
         if len(self.array_energy_consumed) == self.SLOTFRAME_INTERVAL_SIZE + 1:
             self.AVERAGE_ENERGY_CONSUMED = sum(
                 self.array_energy_consumed[:self.SLOTFRAME_INTERVAL_SIZE])/float(self.SLOTFRAME_INTERVAL_SIZE)
             self.array_energy_consumed.pop(0)
-        return self.AVERAGE_ENERGY_CONSUMED,
+        return self.AVERAGE_ENERGY_CONSUMED
     
     def normalize(self, number):
         return 2*number -1  
     
-    def compute_reward(self):
-        reward = self.WQ*self.normalize(1 - self._compute_queue_average_ratio()) +\
-               self.WE*self.normalize(self._compute_charge_ratio())  +\
-               self.WT*self.discretize_traffic(1 - self._compute_traffic()) 
+    def compute_reward(self, next_state):
+        reward = 0
+        for factor_name, factor_value in next_state.items():
+            if factor_name == 'traffic':
+                reward += self.WT*self.discretize_traffic(1 - factor_value) 
+            elif factor_name == 'queue':
+                reward += self.WQ*self.normalize(1 - factor_value)
+            elif factor_name == 'charge':
+                reward += self.WE*self.normalize(factor_value) 
         return reward
     
     def discretize_queue_ratio(self,queue_ratio):
-        average_queue_ratio = self._compute_queue_average_ratio()
+        average_queue_ratio = self._compute_queue_average_ratio(queue_ratio)
         if queue_ratio > average_queue_ratio:
             return 1
         return 0
     
     def discretize_energy(self,energy_left):
-        average_energy_ratio = self._compute_average_energy_ratio()
+        average_energy_ratio = self._compute_average_energy_ratio(energy_left)
         if energy_left > average_energy_ratio:
             return 1
         return 0
 
     def discretize_traffic(self,traffic):
-        average_traffic = self._compute_traffic()
+        average_traffic = self._compute_average_traffic(traffic)
         if traffic >= average_traffic:
             return 1
         return 0
         
-    def discretize_variables(self, state_list_variables):
-        traffic = state_list_variables[0]
-        queue_ratio = state_list_variables[1]
-        energy_left = state_list_variables[2]
-        discrete_traffic = self.discretize_traffic(traffic)
-        discrete_queue_ratio = self.discretize_queue_ratio(queue_ratio)
-        discrete_energy_left = self.discretize_energy(energy_left)
-        return [
-            discrete_traffic,
-            discrete_queue_ratio,
-            discrete_energy_left
-        ]
+    def discretize_variables(self, state):
+        discrete_state =  {}
+        for factor_name,factor in state.items():
+            discretize_function = self.return_function_by_name(factor_name, self.name_to_discretize_function)
+            discrete_factor = discretize_function(factor)
+            discrete_state[factor_name] = discrete_factor
+        return discrete_state
 
-    def map_state_to_number(self, list_state_variables):
-        discrete_state_variables = self.discretize_variables(list_state_variables)
-        discrete_traffic = discrete_state_variables[0]
-        discrete_queue_ratio = discrete_state_variables[1]
-        discrete_energy_left = discrete_state_variables[2]
-        binary_number = str(discrete_traffic) + str(discrete_queue_ratio) + str(discrete_energy_left)
+    def map_state_to_number(self, state):
+        discrete_state = self.discretize_variables(state)
+        print(discrete_state)
+        binary_number = ''
+        for key,value in discrete_state.items():
+            binary_number += str(value) 
         return int(binary_number,2)
     
     def return_best_q_value(self,state):
@@ -546,19 +564,19 @@ class SchedulingFunctionQlearning(SchedulingFunctionBase):
         current_vector = self.Q_table[state]
         return np.argmax(current_vector)
     
-    def compute_q_table(self, list_state_variables, list_next_state_variables, action):
-        curr_state = self.map_state_to_number(list_state_variables)
-        next_state = self.map_state_to_number(list_next_state_variables)
+    def compute_q_table(self, state, next_state, action):
+        curr_state_number = self.map_state_to_number(state)
+        next_state_number = self.map_state_to_number(next_state)
 
         # Compute reward
-        reward = self.compute_reward()
+        reward = self.compute_reward(next_state)
         self.CUMULATIVE_REWARD += reward  # Accumulate reward
             
         # print('CUMULATIVE REWARD:', self.CUMULATIVE_REWARD)
 
         # Compute temporal difference error (TD Error)
-        best_next_q = self.return_best_q_value(next_state)  # max Q(s', a')
-        temporal_difference = reward + self.BETA * best_next_q - self.Q_table[curr_state][action]
+        best_next_q = self.return_best_q_value(next_state_number)  # max Q(s', a')
+        temporal_difference = reward + self.BETA * best_next_q - self.Q_table[curr_state_number][action]
         self.TD_ERROR = temporal_difference
         self.SUM_TD_ERROR += self.TD_ERROR
 
@@ -570,10 +588,8 @@ class SchedulingFunctionQlearning(SchedulingFunctionBase):
         # print('TD ERROR:', self.TD_ERROR)
 
         # Update Q-value using Q-learning update rule
-        self.Q_table[curr_state][action] += self.ALFA * temporal_difference
+        self.Q_table[curr_state_number][action] += self.ALFA * temporal_difference
     
-    def _compute_queue_ratio(self):
-        return len(self.mote.tsch.txQueue)/float(self.settings.tsch_tx_queue_size)
     
     def _is_minimal_cell(self,cell):
         if cell.slot_offset == 0 and cell.channel_offset == 0:
