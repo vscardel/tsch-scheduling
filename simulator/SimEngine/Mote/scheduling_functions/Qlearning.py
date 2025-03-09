@@ -29,7 +29,7 @@ class SchedulingFunctionQlearning(SchedulingFunctionBase):
     num_packets_in_current_slotframe = 0
 
     #Q-learning
-    current_state = (0,0,0)
+    current_state = ()
     EPSLON = None         
     EPISODE = 0
     Q_table = dict()

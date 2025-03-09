@@ -232,57 +232,59 @@ parser.add_argument('-cb','--combinations',type=int, nargs='+', help='Combinatio
 parser.add_argument('-sf','--sched_function', help='Scheduling function alias', required=True)
 parser.add_argument('-app','--application', help='Application Type', required=True)
 parser.add_argument('-of','--output_folder', help='Output folder name', required=True)
-parser.add_argument('-ne','--num_evaluations', type=int, help='Number of evaluations of efficiency function', required=True)
+parser.add_argument('-ne','--num_evaluations', type=int, help='Number of evaluations of efficiency function', required=False)
 parser.add_argument('-af','--aquisition_function', type=str, help='The aquisition function used in gp_minimize', required=False)
 parser.add_argument('-sr','--sync_required', type=bool, help='if sync info is obtained in simulation', required=True)
-parser.add_argument('-nrs','--num_random_starts', type=int, help='num random starts of gp.minimize', required=True)
+parser.add_argument('-nrs','--num_random_starts', type=int, help='num random starts of gp.minimize', required=False)
 parser.add_argument('-cc','--conn_class', type=str, help='connectivity_matrix', required=True)
 parser.add_argument('-nslots','--num_slots', type=int, help='number of slotframes (time) of simulation', required=True)
-
+parser.add_argument('-is_min','--experiment_type', type=str, help='determines the time of experiment (minimization or 2^k)', required=True)
 
 
 
 args = parser.parse_args()
 
-res = gp_minimize(efficience_function,  # The function to minimize
-                  [(0.1, 0.9),  # ALFA
-                   (0.1, 0.9),  # BETA
-                #    (5,10),     # SLOTFRAME_INTERVAL_SIZE
-                   (0.001, 0.005), # EPSLON_DECAY_RATE
-                   (0.05, 0.1),  # MIN_EPSLON
-                #    (50, 100),   # MAX_TX_CELLS_PASSED
-                #    (50, 100),   # MAX_RX_CELLS_PASSED
-                   (0.5, 0.7)],   # EPSLON_THRESHOLD   
-            )
+if args.experiment_type == 'minimization':
+    res = gp_minimize(efficience_function,  # The function to minimize
+                    [(0.1, 0.9),  # ALFA
+                    (0.1, 0.9),  # BETA
+                    #    (5,10),     # SLOTFRAME_INTERVAL_SIZE
+                    (0.001, 0.005), # EPSLON_DECAY_RATE
+                    (0.05, 0.1),  # MIN_EPSLON
+                    #    (50, 100),   # MAX_TX_CELLS_PASSED
+                    #    (50, 100),   # MAX_RX_CELLS_PASSED
+                    (0.5, 0.7)],   # EPSLON_THRESHOLD   
+                )
 
 
-print('Optimal set of parameters\n')
-parameters_to_save = {}
-for i,paramater in enumerate(parameters_position):
-    current_value = res.x[i]
-    print('{0}: {1}\n'.format(paramater, current_value))
-    parameters_to_save[paramater] = current_value
+    print('Optimal set of parameters\n')
+    parameters_to_save = {}
+    for i,paramater in enumerate(parameters_position):
+        current_value = res.x[i]
+        print('{0}: {1}\n'.format(paramater, current_value))
+        parameters_to_save[paramater] = current_value
 
-with open('./optimal_set_of_paramaters.json', 'w') as f:
-    json.dump(parameters_to_save, f)
+    with open('./optimal_set_of_paramaters.json', 'w') as f:
+        json.dump(parameters_to_save, f)
 
-print('Best value: {0}'.format(min(res.func_vals)))
+    print('Best value: {0}'.format(min(res.func_vals)))
 
-ys = ALL_SCORES
-xs = [i+1 for i in range(len(ALL_SCORES))]  # Evaluation numbers (x-axis)
+    ys = ALL_SCORES
+    xs = [i+1 for i in range(len(ALL_SCORES))]  # Evaluation numbers (x-axis)
 
-my_plot = plt.plot(xs, ys ,color='red', linewidth=2)
-plt.scatter(xs, ys, color='red', s=50, edgecolors='black', zorder=3)
-plt.title("Optimization Convergence")
-plt.xlabel("Number of Evaluations")
-plt.ylabel("Minimum Objective Function Value")
-plt.xticks(range(1, len(ALL_SCORES)+1, 1))  
-random_num = random.randint(1, 50)
-plt.savefig("all_values_convergence{0}.png".format(random_num))
+    my_plot = plt.plot(xs, ys ,color='red', linewidth=2)
+    plt.scatter(xs, ys, color='red', s=50, edgecolors='black', zorder=3)
+    plt.title("Optimization Convergence")
+    plt.xlabel("Number of Evaluations")
+    plt.ylabel("Minimum Objective Function Value")
+    plt.xticks(range(1, len(ALL_SCORES)+1, 1))  
+    random_num = random.randint(1, 50)
+    plt.savefig("all_values_convergence{0}.png".format(random_num))
 
-ax = plot_convergence(res)
-ax.set_title("Optimization Convergence")
-ax.set_xlabel("Number of Evaluations")
-ax.set_ylabel("Minimum Objective Function Value")
-plt.savefig("convergence_plot{0}.png".format(random_num))
-
+    ax = plot_convergence(res)
+    ax.set_title("Optimization Convergence")
+    ax.set_xlabel("Number of Evaluations")
+    ax.set_ylabel("Minimum Objective Function Value")
+    plt.savefig("convergence_plot{0}.png".format(random_num))
+else:
+    print('lets do the 2^k factorial experiment')
