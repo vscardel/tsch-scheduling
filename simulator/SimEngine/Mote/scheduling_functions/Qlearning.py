@@ -121,18 +121,21 @@ class SchedulingFunctionQlearning(SchedulingFunctionBase):
         if self.mote.dagRoot:
             return
         preferred_parent = self.mote.rpl.getPreferredParent()
+
         if preferred_parent and self.mote.clear_to_send_EBs_DATA():
+
+            # baseline case (random action 50% chance)
+            if not self.settings.factorial_combinations:
+                print('baseline')
+                action = random.choice([0, 1])
+                self.take_random_action(preferred_parent, action, cellopt)
+                return 
+            
+            # if there are factors to use, run Q-learning as normal
             self.EPISODE = self.EPISODE + 1
             if self.EPISODE % 100 == 0:
                 self.save_qlearning_stats()
             self.EPSLON = self.MIN_EPSLON + (self.MAX_EPSLON - self.MIN_EPSLON)*np.exp(-self.EPSLON_DECAY_RATE*self.EPISODE)
-            # print('EPISODE: {0}'.format(self.EPISODE))
-            # print('EPSLON: {0}'.format(self.EPSLON))
-
-
-            # print("Mote id {0}".format(self.mote.id))
-            # print('----------------------')
-            # print(self.Q_table)
             
             next_state = self.compute_next_state(self.settings.factorial_combinations)
 
@@ -174,7 +177,7 @@ class SchedulingFunctionQlearning(SchedulingFunctionBase):
             
             self.current_state = next_state
             self.compute_q_table(self.current_state,next_state,action)
-        
+
     #be more conservative in random actions
     def take_random_action(self, preferred_parent, action, cellopt):
         if action == 0:

@@ -2,11 +2,13 @@ import argparse
 import json
 import os
 import shutil
-from skopt import gp_minimize
-from skopt.plots import plot_convergence
+import itertools
 import matplotlib.pyplot as plt
 import numpy as np
 import random
+
+from skopt import gp_minimize
+from skopt.plots import plot_convergence
 
 MAX_FUNCTION_VALUE = 1
 NUM_RUNS = 0
@@ -98,30 +100,15 @@ def normalize(metrics):
         normalized_metrics[position] = normalize_metric(name, metrics[position])
     return normalized_metrics
 
-def efficience_function(
-        parameters, 
-        experiment_type = 'minimization',
-        factorial_combinations = []
-    ):
-    global NUM_RUNS, ALL_SCORES
-    # import ipdb;
-    # ipdb.set_trace()
-    global args
 
+def load_config():
     settings = None
-
-    config_name = 'config_{0}.json'.format(args.output_folder)
-    try:
-        with open(config_name,'r') as f:
-            json_string = f.read()
-            settings = json.loads(json_string)
-    except IOError as err:
-        with open('config.json', 'r') as f:
-            json_string = f.read() 
-        with open(config_name, 'w') as f:
-            f.write(json_string)
+    with open('config.json', 'r') as f:
+        json_string = f.read() 
         settings = json.loads(json_string)
+    return settings
 
+def configure_settings(settings, parameters):
     settings['settings']['combination']['exec_numMotes'] = args.combinations
     settings['execution']['numCPUs'] = args.num_cpus
     settings['execution']['numRuns'] = args.num_runs
@@ -131,26 +118,34 @@ def efficience_function(
     settings['log_directory_name']= args.output_folder
     settings['get_sync_node_info'] = args.sync_required
 
-    if experiment_type != 'minimization':
-        settings['factorial_combinations'] = factorial_combinations
-
     # Configure simulator with the parameters
     for position, parameter_name in enumerate(parameters_position):
         parameter_value = parameters[position]
         settings['settings']['regular'][parameter_name] = parameter_value
+    return settings
 
+def save_curr_run_config(config_name, settings):
+    with open(config_name, 'w') as f:
+        json.dump(settings, f, indent=4)
+def efficience_function(parameters):
+    global NUM_RUNS, ALL_SCORES
+    # import ipdb;
+    # ipdb.set_trace()
+    global args
+
+    config_name = 'config_{0}.json'.format(args.output_folder)
+    settings = load_config()
+    settings = configure_settings(settings, parameters)
+    save_curr_run_config(config_name, settings)
     settings = convert_types(settings)
 
-    with open('config.json', 'w') as f:
-        f.write(json.dumps(settings, indent=4))
-
     # Run simulator
-    os.system('python2 runSim.py')
+    os.system('python2 runSim.py --config {0}'.format(config_name))
 
     # Get results
     num_motes = settings['settings']['combination']['exec_numMotes'][0]
 
-    kpis, sync_info = None, None
+    kpis = None
     for tentativa in range(3):
         try:
             with open(
@@ -162,29 +157,15 @@ def efficience_function(
             , 'r') as f:
                 json_string = f.read()
                 kpis = json.loads(json_string)
-            with open(
-                os.path.join(
-                    'simData', 
-                    args.output_folder,
-                    'exec_numMotes_{0}'.format(num_motes), 
-                    'run_0/sync_info.json'
-                )
-            , 'r') as f:
-                json_string = f.read()
-                sync_info = json.loads(json_string)                
-                break
         except Exception as e:
             print(e)
             print("Something went wrong reading KPIs on try {0}".format(tentativa))
                 
-    if kpis and sync_info:
-
-
+    if kpis:
         latency = kpis['0']['global-stats']['e2e-upstream-latency'][0]['mean']
         join_time = kpis['0']['global-stats']["joining-time"][0]['mean']
         network_lifetime = kpis['0']['global-stats']['network_lifetime'][0]['min']
         packet_delivery_ratio = kpis['0']['global-stats']['e2e-upstream-delivery'][0]['value']
-        sync_list = [v for k,v in sync_info.items()]
 
         update_min_max_values('latency',latency)
         update_min_max_values('join_time',join_time)
@@ -241,7 +222,7 @@ parser.add_argument('-app','--application', help='Application Type', required=Tr
 parser.add_argument('-of','--output_folder', help='Output folder name', required=True)
 parser.add_argument('-ne','--num_evaluations', type=int, help='Number of evaluations of efficiency function', required=False)
 parser.add_argument('-af','--aquisition_function', type=str, help='The aquisition function used in gp_minimize', required=False)
-parser.add_argument('-sr','--sync_required', type=bool, help='if sync info is obtained in simulation', required=True)
+parser.add_argument('-sr','--sync_required', type=bool, help='if sync info is obtained in simulation', required=False)
 parser.add_argument('-nrs','--num_random_starts', type=int, help='num random starts of gp.minimize', required=False)
 parser.add_argument('-cc','--conn_class', type=str, help='connectivity_matrix', required=True)
 parser.add_argument('-nslots','--num_slots', type=int, help='number of slotframes (time) of simulation', required=True)
@@ -294,4 +275,49 @@ if args.experiment_type == 'minimization':
     ax.set_ylabel("Minimum Objective Function Value")
     plt.savefig("convergence_plot{0}.png".format(random_num))
 else:
-    print('lets do the 2^k factorial experiment')
+    print('lets do the 2^k factorial experiment')    
+    paramaters = None
+    parameters_list = [None] * len(parameters_position)
+    with open('./optimal_set_of_paramaters.json', 'r') as f:
+        parameters = json.load(f)
+        # for compatibility
+        for position, name in enumerate(parameters_position):
+            parameters_list[position] = parameters[name]
+
+    # build all possibilities of factors
+    factors = ['traffic', 'queue', 'charge']
+    all_combinations = []
+    combinations = list(itertools.product([0, 1], repeat=3))
+    for combination in combinations:
+        current_combination = []
+        for i,index in enumerate(combination):
+            if index:
+                current_combination.append(factors[i])
+        all_combinations.append(current_combination)
+
+    all_combinations.sort(key=len)
+    all_combinations.reverse()
+    # run each combination
+    for factor_combination in all_combinations:
+        # empty combination
+        if not factor_combination:
+            output_folder = 'baseline'
+        else:
+            output_folder = '_'.join(factor_combination)
+        config_name = 'config_{0}.json'.format(output_folder)
+        settings = load_config()
+        settings = configure_settings(settings, parameters_list)
+        settings['log_directory_name'] = output_folder
+        settings['settings']['regular']['factorial_combinations'] = factor_combination   
+        save_curr_run_config(config_name, settings)
+        settings = convert_types(settings)   
+        os.system('python2 runSim.py --config {0}'.format(config_name))
+        curr_output_folder_path = os.path.join(
+            'simData',
+            output_folder,
+            'exec_numMotes_{0}'.format(args.combinations[0])
+        )
+        os.system('python2 compute_kpis.py --subfolder {0}'.format(curr_output_folder_path))
+        os.system('python2 plot.py --inputfolder {0}'.format(curr_output_folder_path))
+        import time 
+        time.sleep(3)

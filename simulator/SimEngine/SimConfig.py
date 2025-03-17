@@ -61,7 +61,7 @@ class SimConfig(dict):
             # startTime needs to be initialized
             SimConfig._startTime = time.time()
 
-        if   configfile is not None:
+        if configfile is not None:
             # store params
             self.configfile = configfile
 
@@ -74,6 +74,8 @@ class SimConfig(dict):
                     self._raw_data = file.read()
         elif configdata is not None:
             self._raw_data = configdata
+            config_dict   = DotableDict(json.loads(self._raw_data))
+            self.set_log_directory_name(config_dict['log_directory_name'])
         else:
             raise Exception()
 
@@ -91,7 +93,10 @@ class SimConfig(dict):
         return self._raw_data
 
     def get_log_directory_name(self):
-        return SimConfig._log_directory_name
+        return self._log_directory_name
+    
+    def set_log_directory_name(self, dir_name):
+        self._log_directory_name = dir_name
 
     @classmethod
     def get_startTime(cls):
@@ -158,7 +163,6 @@ class SimConfig(dict):
             else:
                 log_directory_name = hostname
         else:
-            print(self.log_directory_name)
             log_directory_path = os.path.join(
                 SimSettings.SimSettings.DEFAULT_LOG_ROOT_DIR,
                 self.log_directory_name,

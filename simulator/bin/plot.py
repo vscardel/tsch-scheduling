@@ -49,7 +49,7 @@ def main(options):
 
     for key in options.kpis:
         # load data
-        for file_path in sorted(glob.glob(os.path.join(subfolder, '*.kpi'))):
+        for file_path in sorted(glob.glob(subfolder)):
             curr_combination = os.path.basename(file_path)[:-8] # remove .dat.kpi
             with open(file_path, 'r') as f:
 
@@ -105,6 +105,8 @@ def plot_box(data, key, subfolder):
 
 def savefig(output_folder, output_name, output_format="png"):
     # check if output folder exists and create it if not
+    if '.kpi' in output_folder:
+        output_folder = output_folder[:-20]
     if not os.path.isdir(output_folder):
         os.makedirs(output_folder)
 
