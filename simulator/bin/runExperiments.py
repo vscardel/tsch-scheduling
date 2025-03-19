@@ -320,4 +320,4 @@ else:
         os.system('python2 compute_kpis.py --subfolder {0}'.format(curr_output_folder_path))
         os.system('python2 plot.py --inputfolder {0}'.format(curr_output_folder_path))
         import time 
-        time.sleep(3)
+        time.sleep(10)

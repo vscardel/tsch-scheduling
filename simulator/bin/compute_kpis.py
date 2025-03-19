@@ -1,5 +1,6 @@
 from __future__ import division
 from __future__ import print_function
+import argparse
 
 # =========================== adjust path =====================================
 
@@ -402,17 +403,30 @@ def kpis_all(inputfile):
 
     return allstats
 
+
+def parseCliParams():
+
+    parser = argparse.ArgumentParser()
+
+    parser.add_argument(
+        '--subfolder',
+        help       = 'Location of the results.',
+    )
+    cliparams      = parser.parse_args()
+    return cliparams.__dict__
+
 # =========================== main ============================================
 
 def main():
 
+    import ipdb;
+    ipdb.set_trace()
+
     # FIXME: This logic could be a helper method for other scripts
     # Identify simData having the latest results. That directory should have
     # the latest "mtime".
-    subfolders = list(
-        [os.path.join('simData', x) for x in os.listdir('simData')]
-    )
-    subfolder = max(subfolders, key=os.path.getmtime)
+    cliparams = parseCliParams()
+    subfolder = cliparams['subfolder']
     for infile in glob.glob(os.path.join(subfolder, '*.dat')):
         print('generating KPIs for {0}'.format(infile))
 
