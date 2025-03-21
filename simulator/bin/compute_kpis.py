@@ -419,9 +419,6 @@ def parseCliParams():
 
 def main():
 
-    import ipdb;
-    ipdb.set_trace()
-
     # FIXME: This logic could be a helper method for other scripts
     # Identify simData having the latest results. That directory should have
     # the latest "mtime".

@@ -1,11 +1,12 @@
 from __future__ import absolute_import
 # =========================== imports =========================================
 
+import itertools
+import math
+import netaddr
+import numpy as np
 import random
 import SimEngine
-import netaddr
-import itertools
-import numpy as np
 
 from .. import MoteDefines as d
 from math import factorial as fat
@@ -26,7 +27,7 @@ class SchedulingFunctionQlearning(SchedulingFunctionBase):
     QUEUE_OVERFLOW = False
 
     #poisson_computation
-    num_packets_in_current_slotframe = 0
+    num_packets_in_current_episode = 0
 
     #Q-learning
     current_state = ()
@@ -139,42 +140,37 @@ class SchedulingFunctionQlearning(SchedulingFunctionBase):
             
             next_state = self.compute_next_state(self.settings.factorial_combinations)
 
-            self.LAMBDA = self.num_packets_in_current_slotframe / self.SLOTFRAME_INTERVAL_SIZE
+            self.LAMBDA = float(self.num_packets_in_current_episode) / self.MAX_RX_CELLS_PASSED
+
+            self.num_packets_in_current_episode = 0
             
-            distribution = self._compute_poisson_packet_distribution(time_interval=self.SLOTFRAME_INTERVAL_SIZE)
+            distribution = self._compute_poisson_packet_distribution(time_interval=self.MAX_RX_CELLS_PASSED)
 
             if self.EPSLON < self.EPSLON_THRESHOLD:
-                print('USING THE TABLE')
                 action = self.return_best_q_action(self.map_state_to_number(self.current_state))
             else:
-                print('TAKING RANDOM ACTION')
                 action = random.choice([0,1,2])
                 self.take_random_action(preferred_parent, action, cellopt)
                 self.current_state = next_state
                 self.compute_q_table(self.current_state,next_state,action)
                 return
             
-            # print('USING Q-TABLE')
-            # print('EPSLON')
-            # print(self.EPSLON)
-            # print('action')
-            # print(action)
-
             if action == 0:
                 num_packets_to_be_generated = self.compute_num_packets_to_be_generated(distribution)
-                self.sixp_interface_add(
-                    preferred_parent = preferred_parent,
-                    num_cells        = num_packets_to_be_generated,
-                    cell_option      = cellopt,
-                )
+                if num_packets_to_be_generated > 0:
+                    self.sixp_interface_add(
+                        preferred_parent = preferred_parent,
+                        num_cells        = num_packets_to_be_generated,
+                        cell_option      = cellopt,
+                    )
             elif action == 1:
                 num_packets_to_remove = self.compute_num_packets_to_remove(self.LAMBDA, cellopt)
-                self.sixp_interface_delete(
-                    preferred_parent = preferred_parent,
-                    num_cells        = num_packets_to_remove,
-                    cell_option      = cellopt
-                )
-            
+                if num_packets_to_remove > 0:
+                    self.sixp_interface_delete(
+                        preferred_parent = preferred_parent,
+                        num_cells        = num_packets_to_remove,
+                        cell_option      = cellopt
+                    )
             self.current_state = next_state
             self.compute_q_table(self.current_state,next_state,action)
 
@@ -230,7 +226,7 @@ class SchedulingFunctionQlearning(SchedulingFunctionBase):
         if not self._is_minimal_cell(cell):
             self.TX_CELLS_PASSED = self.TX_CELLS_PASSED + 1
             if bool(sent_packet): 
-                self.num_packets_in_current_slotframe = self.num_packets_in_current_slotframe + 1
+                self.num_packets_in_current_episode = self.num_packets_in_current_episode + 1
             if (self.TX_CELLS_PASSED > 0 and \
                     self.TX_CELLS_PASSED % self.MAX_TX_CELLS_PASSED == 0):
                 self.adapt_to_traffic([d.CELLOPTION_TX])
@@ -242,9 +238,9 @@ class SchedulingFunctionQlearning(SchedulingFunctionBase):
         if not self._is_minimal_cell(cell):
             self.RX_CELLS_PASSED = self.RX_CELLS_PASSED + 1
             if bool(received_packet): 
-                self.num_packets_in_current_slotframe = self.num_packets_in_current_slotframe + 1
+                self.num_packets_in_current_episode = self.num_packets_in_current_episode + 1
             if (self.RX_CELLS_PASSED > 0 and \
-                    self.RX_CELLS_PASSED % self.MAX_TX_CELLS_PASSED == 0):
+                    self.RX_CELLS_PASSED % self.MAX_RX_CELLS_PASSED == 0):
                 self.adapt_to_traffic([d.CELLOPTION_RX])
                 self.RX_CELLS_PASSED = 0
 
@@ -417,7 +413,7 @@ class SchedulingFunctionQlearning(SchedulingFunctionBase):
         preferred_parent = self.mote.rpl.getPreferredParent()
         allocated_cells = [cell for cell in self.mote.tsch.get_cells(preferred_parent, self.SLOTFRAME_HANDLE) 
                            if cell.options == cell_option]
-        num_cells_to_remove = max(1,len(allocated_cells) - LAMBDA)
+        num_cells_to_remove = max(1,len(allocated_cells) - int(math.ceil(self.LAMBDA)))
         return num_cells_to_remove
 
     def _get_available_slots(self):
@@ -553,7 +549,7 @@ class SchedulingFunctionQlearning(SchedulingFunctionBase):
 
     def map_state_to_number(self, state):
         discrete_state = self.discretize_variables(state)
-        print(discrete_state)
+        # print(discrete_state)
         binary_number = ''
         for key,value in discrete_state.items():
             binary_number += str(value) 

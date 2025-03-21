@@ -127,6 +127,7 @@ def configure_settings(settings, parameters):
 def save_curr_run_config(config_name, settings):
     with open(config_name, 'w') as f:
         json.dump(settings, f, indent=4)
+        
 def efficience_function(parameters):
     global NUM_RUNS, ALL_SCORES
     # import ipdb;
@@ -141,6 +142,12 @@ def efficience_function(parameters):
 
     # Run simulator
     os.system('python2 runSim.py --config {0}'.format(config_name))
+    curr_output_folder_path = os.path.join(
+        'simData',
+        args.output_folder,
+        'exec_numMotes_{0}'.format(args.combinations[0])
+    )
+    os.system('python2 compute_kpis.py --subfolder {0}'.format(curr_output_folder_path))
 
     # Get results
     num_motes = settings['settings']['combination']['exec_numMotes'][0]
@@ -150,9 +157,8 @@ def efficience_function(parameters):
         try:
             with open(
                 os.path.join(
-                    'simData', 
-                    args.output_folder, 
-                    'exec_numMotes_{0}.dat.kpi'.format(num_motes)
+                    curr_output_folder_path,
+                    'output_cpu0.dat.kpi'.format(num_motes)
                 )
             , 'r') as f:
                 json_string = f.read()
