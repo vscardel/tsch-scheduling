@@ -6,6 +6,7 @@ import itertools
 import matplotlib.pyplot as plt
 import numpy as np
 import random
+import time
 
 from skopt import gp_minimize
 from skopt.plots import plot_convergence
@@ -81,13 +82,10 @@ def update_min_max_values(name, value):
     if value < min_values[name]:
         min_values[name] = value
 
-def remove_results_folder(args):
-    shutil.rmtree(        
-            os.path.join(
-            'simData', 
-            args.output_folder
-        )
-    )
+def remove_results_folder(subfolder):
+    import ipdb;
+    shutil.rmtree(subfolder)
+    time.sleep(5)
 
 def normalize_metric(name,value):
     if max_values[name] == min_values[name]:
@@ -127,7 +125,7 @@ def configure_settings(settings, parameters):
 def save_curr_run_config(config_name, settings):
     with open(config_name, 'w') as f:
         json.dump(settings, f, indent=4)
-        
+
 def efficience_function(parameters):
     global NUM_RUNS, ALL_SCORES
     # import ipdb;
@@ -148,6 +146,7 @@ def efficience_function(parameters):
         'exec_numMotes_{0}'.format(args.combinations[0])
     )
     os.system('python2 compute_kpis.py --subfolder {0}'.format(curr_output_folder_path))
+    time.sleep(3)
 
     # Get results
     num_motes = settings['settings']['combination']['exec_numMotes'][0]
@@ -181,7 +180,7 @@ def efficience_function(parameters):
         #first run is only to update min_max values
         if NUM_RUNS == 0:
             NUM_RUNS = NUM_RUNS + 1
-            remove_results_folder(args)
+            remove_results_folder(curr_output_folder_path)
             ALL_SCORES.append(MAX_FUNCTION_VALUE)
             return MAX_FUNCTION_VALUE
 
@@ -200,11 +199,11 @@ def efficience_function(parameters):
         except Exception as e:
             print(e)
             print('Failed to calculate score. Returning infinity.')
-            remove_results_folder(args)
+            remove_results_folder(curr_output_folder_path)
             return MAX_FUNCTION_VALUE
         
         # Remove results folder
-        remove_results_folder(args)
+        remove_results_folder(curr_output_folder_path)
         NUM_RUNS = NUM_RUNS + 1
 
         if score != 0:
