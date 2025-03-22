@@ -128,8 +128,8 @@ class SchedulingFunctionQlearning(SchedulingFunctionBase):
             # baseline case (random action 50% chance)
             if not self.settings.factorial_combinations:
                 print('baseline')
-                action = random.choice([0, 1])
-                self.take_random_action(preferred_parent, action, cellopt)
+                action = random.choice([0, 1, 2])
+                self.take_random_action(preferred_parent, action, cellopt, method = 'baseline')
                 return 
             
             # if there are factors to use, run Q-learning as normal
@@ -175,7 +175,7 @@ class SchedulingFunctionQlearning(SchedulingFunctionBase):
             self.compute_q_table(self.current_state,next_state,action)
 
     #be more conservative in random actions
-    def take_random_action(self, preferred_parent, action, cellopt):
+    def take_random_action(self, preferred_parent, action, cellopt, method = None):
         if action == 0:
             self.sixp_interface_add(
                 preferred_parent = preferred_parent,
@@ -183,11 +183,20 @@ class SchedulingFunctionQlearning(SchedulingFunctionBase):
                 cell_option      = cellopt,
             )
         elif action == 1:
-            self.sixp_interface_delete(
-                preferred_parent = preferred_parent,
-                num_cells        = 1,
-                cell_option      = cellopt
-            )
+            if method == 'baseline':
+                self.sixp_interface_delete(
+                    preferred_parent = preferred_parent,
+                    num_cells        = 1,
+                    cell_option      = cellopt,
+                    method=method
+                )
+            else:
+                self.sixp_interface_delete(
+                    preferred_parent = preferred_parent,
+                    num_cells        = 1,
+                    cell_option      = cellopt,
+                    method=method
+                )
 
     def compute_next_state(self, factorial_combinations):
         state = {}
@@ -1137,9 +1146,18 @@ class SchedulingFunctionQlearning(SchedulingFunctionBase):
             num_cells,
             preferred_parent,
             cell_option,
+            method = None
         ):
 
-        cells_to_delete = self._get_unused_cells(cell_option)
+        if method == 'baseline':
+            cells_to_delete = self._create_occupied_cell_list(
+            neighbor      = preferred_parent,
+            cell_options  = cell_option,
+            cell_list_len = self.DEFAULT_CELL_LIST_LEN
+        )
+        else:
+            # apply optmization of removing onl unused cells
+            cells_to_delete = self._get_unused_cells(cell_option)
         if num_cells > len(cells_to_delete):
             num_cells = 1
 

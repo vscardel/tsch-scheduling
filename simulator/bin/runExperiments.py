@@ -12,7 +12,6 @@ from skopt import gp_minimize
 from skopt.plots import plot_convergence
 
 MAX_FUNCTION_VALUE = 1
-NUM_RUNS = 0
 ALL_SCORES = []
 
 def convert_types(obj):
@@ -26,17 +25,6 @@ def convert_types(obj):
         return float(obj)
     else:
         return obj
-
-# parameters_position = [
-#    "ALFA",
-#    "BETA",
-#    "SLOTFRAME_INTERVAL_SIZE",
-#    "EPSLON_DECAY_RATE",
-#    "MIN_EPSLON",
-#    "MAX_TX_CELLS_PASSED",
-#    "MAX_RX_CELLS_PASSED",
-#    "EPSLON_THRESHOLD"
-# ]
 
 parameters_position = [
    "ALFA",
@@ -53,51 +41,40 @@ metrics_vector_position = [
    "packet_delivery_ratio",
 ]
 
-max_values = {
-   "latency": -1,
-   "join_time": -1,
-   "network_lifetime": -1,
-   "packet_delivery_ratio": -1,
+#hotspot scoring function
+
+kpis_weights = {
+    'latency': 0.3,
+    'pdr': 0.1,
+    'lifetime': 0.3,
+    'join_time': 0.3
 }
 
-min_values = {
-   "latency": 1000000,
-   "join_time": 1000000,
-   "network_lifetime": 1000000,
-   "packet_delivery_ratio": 1000000,
+kpis_tresholds = {
+    'latency': 1.0,
+    'pdr': 0.9,
+    'lifetime': 1.5,
+    'join_time': 300,
 }
 
-weigths = {
-    "latency": 0.2,
-   "join_time": 0.2,
-   "network_lifetime": 0.2,
-   "packet_delivery_ratio": 0.2,
-   "average_sync_nodes_in_simulation": 0.2
-}
+# for metrics that should stay below a certain treshold
+def heaviside_step_function_low_t(diff):
+    if diff < 0:
+        return 0
+    return 1
 
-def update_min_max_values(name, value):
-    if value > max_values[name]:
-        max_values[name] = value
-    
-    if value < min_values[name]:
-        min_values[name] = value
+# for metrics that should stay above a certain treshold
+def heaviside_step_function_high_t(diff):
+    if diff > 0:
+        return 0
+    return 1
+
+########################
 
 def remove_results_folder(subfolder):
     import ipdb;
     shutil.rmtree(subfolder)
     time.sleep(5)
-
-def normalize_metric(name,value):
-    if max_values[name] == min_values[name]:
-        return 1
-    return (value - min_values[name]) / (max_values[name] - min_values[name])
-
-def normalize(metrics):
-    normalized_metrics = [0] * len(metrics_vector_position)
-    for position,name in enumerate(metrics_vector_position):
-        normalized_metrics[position] = normalize_metric(name, metrics[position])
-    return normalized_metrics
-
 
 def load_config():
     settings = None
@@ -126,11 +103,54 @@ def save_curr_run_config(config_name, settings):
     with open(config_name, 'w') as f:
         json.dump(settings, f, indent=4)
 
+def load_kpis(folder_path, num_motes):
+    kpis = None
+    for tentativa in range(3):
+        try:
+            with open(
+                os.path.join(
+                    folder_path,
+                    'output_cpu0.dat.kpi'.format(num_motes)
+                )
+            , 'r') as f:
+                json_string = f.read()
+                kpis = json.loads(json_string)
+        except Exception as e:
+            print(e)
+            print("Something went wrong reading KPIs on try {0}".format(tentativa))
+    return kpis
+
+def compute_score(kpis):
+    latency = kpis['0']['global-stats']['e2e-upstream-latency'][0]['mean']
+    #convert join_time to seconds
+    join_time = kpis['0']['global-stats']["joining-time"][0]['mean'] / 100
+    network_lifetime = kpis['0']['global-stats']['network_lifetime'][0]['min']
+    packet_delivery_ratio = kpis['0']['global-stats']['e2e-upstream-delivery'][0]['value']
+
+    try:
+        metrics_vector = [
+            (latency, 'latency'), 
+            (join_time, 'join_time'), 
+            (network_lifetime, 'lifetime'), 
+            (packet_delivery_ratio, 'pdr')
+        ]
+        score = 0.0
+        for metric in metrics_vector:
+            metric_value, metric_name = metric[0],metric[1]
+            if metric_name in ['latency', 'join_time']:
+                score += kpis_weights[metric_name] * heaviside_step_function_low_t(metric_value - kpis_tresholds[metric_name])
+            elif metric_name in ['pdf', 'lifetime']:
+                score += kpis_weights[metric_name] * heaviside_step_function_high_t(metric_value - kpis_tresholds[metric_name])
+        return score
+    except Exception as e:
+        print(e)
+        print('Failed to calculate score. Returning MAX VALUE.')
+        return None
+
+# to be called by the gp_minimize function
 def efficience_function(parameters):
-    global NUM_RUNS, ALL_SCORES
-    # import ipdb;
-    # ipdb.set_trace()
-    global args
+    ALL_SCORES
+    global args, ALL_SCORES
 
     config_name = 'config_{0}.json'.format(args.output_folder)
     settings = load_config()
@@ -150,72 +170,16 @@ def efficience_function(parameters):
 
     # Get results
     num_motes = settings['settings']['combination']['exec_numMotes'][0]
-
-    kpis = None
-    for tentativa in range(3):
-        try:
-            with open(
-                os.path.join(
-                    curr_output_folder_path,
-                    'output_cpu0.dat.kpi'.format(num_motes)
-                )
-            , 'r') as f:
-                json_string = f.read()
-                kpis = json.loads(json_string)
-        except Exception as e:
-            print(e)
-            print("Something went wrong reading KPIs on try {0}".format(tentativa))
+    kpis = load_kpis(curr_output_folder_path, num_motes)
                 
     if kpis:
-        latency = kpis['0']['global-stats']['e2e-upstream-latency'][0]['mean']
-        join_time = kpis['0']['global-stats']["joining-time"][0]['mean']
-        network_lifetime = kpis['0']['global-stats']['network_lifetime'][0]['min']
-        packet_delivery_ratio = kpis['0']['global-stats']['e2e-upstream-delivery'][0]['value']
-
-        update_min_max_values('latency',latency)
-        update_min_max_values('join_time',join_time)
-        update_min_max_values('network_lifetime',network_lifetime)
-        update_min_max_values('packet_delivery_ratio',packet_delivery_ratio)
-
-        #first run is only to update min_max values
-        if NUM_RUNS == 0:
-            NUM_RUNS = NUM_RUNS + 1
-            remove_results_folder(curr_output_folder_path)
-            ALL_SCORES.append(MAX_FUNCTION_VALUE)
-            return MAX_FUNCTION_VALUE
-
-        # import ipdb;
-        # ipdb.set_trace()
-        try:
-            metrics_vector = [latency, join_time, network_lifetime, packet_delivery_ratio]
-            #normalize results
-            normalized_results = normalize(metrics_vector)
-
-            score = (1 - normalized_results[0] )* weigths['latency'] + \
-                    (1 - normalized_results[1]) * weigths['join_time']  + \
-                    normalized_results[2] * weigths['network_lifetime']  + \
-                    normalized_results[3] * weigths['packet_delivery_ratio'] 
-                    
-        except Exception as e:
-            print(e)
-            print('Failed to calculate score. Returning infinity.')
-            remove_results_folder(curr_output_folder_path)
-            return MAX_FUNCTION_VALUE
-        
-        # Remove results folder
+        score = compute_score(kpis)
         remove_results_folder(curr_output_folder_path)
-        NUM_RUNS = NUM_RUNS + 1
-
-        if score != 0:
-            # import ipdb;
-            # ipdb.set_trace()
-            ALL_SCORES.append(1-score)
-            return 1 - score
-        else:
-            return MAX_FUNCTION_VALUE
-    else:
-        NUM_RUNS = NUM_RUNS + 1
+        if score:
+            ALL_SCORES.append(score)
+            return score
         return MAX_FUNCTION_VALUE
+    return MAX_FUNCTION_VALUE
 
 parser = argparse.ArgumentParser()
 
@@ -326,3 +290,13 @@ else:
         os.system('python2 plot.py --inputfolder {0}'.format(curr_output_folder_path))
         import time 
         time.sleep(10)
+        kpis = load_kpis(curr_output_folder_path, args.combinations[0])
+        score = compute_score(kpis)
+        final_results = {
+            'score': score, 
+            # to be computed
+            'comulative reward': None
+        }
+        with open(os.path.join(curr_output_folder_path, 'final_results'), 'w') as f:
+            json.dump(final_results, f, indent=4)
+        time.sleep(2)
