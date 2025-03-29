@@ -51,28 +51,27 @@ kpis_weights = {
 }
 
 kpis_tresholds = {
-    'latency': 1.0,
-    'pdr': 0.9,
-    'lifetime': 1.5,
-    'join_time': 300,
+    'latency': 0.54,
+    'pdr': 0.98,
+    'lifetime': 0.49,
+    'join_time': 880,
 }
 
-# for metrics that should stay below a certain treshold
-def heaviside_step_function_low_t(diff):
-    if diff < 0:
-        return 0
-    return 1
+metrics = {
+    'latencies': [],
+    'pdrs': [],
+    'join_times': [],
+    'lifetimes': []
+}
 
-# for metrics that should stay above a certain treshold
-def heaviside_step_function_high_t(diff):
-    if diff > 0:
-        return 0
-    return 1
+def smooth_threshold_above(x, T, k=10):
+    return 1 / (1 + np.exp(-k * (x - T)))
 
+def smooth_threshold_below(x, T, k=10):
+    return (1 - smooth_threshold_above(x, T, k))
 ########################
 
 def remove_results_folder(subfolder):
-    import ipdb;
     shutil.rmtree(subfolder)
     time.sleep(5)
 
@@ -127,6 +126,11 @@ def compute_score(kpis):
     network_lifetime = kpis['0']['global-stats']['network_lifetime'][0]['min']
     packet_delivery_ratio = kpis['0']['global-stats']['e2e-upstream-delivery'][0]['value']
 
+    metrics['latencies'].append(latency)
+    metrics['pdrs'].append(packet_delivery_ratio)
+    metrics['lifetimes'].append(network_lifetime)
+    metrics['join_times'].append(join_time)
+
     try:
         metrics_vector = [
             (latency, 'latency'), 
@@ -137,10 +141,12 @@ def compute_score(kpis):
         score = 0.0
         for metric in metrics_vector:
             metric_value, metric_name = metric[0],metric[1]
-            if metric_name in ['latency', 'join_time']:
-                score += kpis_weights[metric_name] * heaviside_step_function_low_t(metric_value - kpis_tresholds[metric_name])
-            elif metric_name in ['pdf', 'lifetime']:
-                score += kpis_weights[metric_name] * heaviside_step_function_high_t(metric_value - kpis_tresholds[metric_name])
+            if metric_name == 'latency':
+                score += kpis_weights[metric_name] * smooth_threshold_above(metric_value, kpis_tresholds[metric_name])
+            if metric_name == 'join_time':
+                score += kpis_weights[metric_name] * smooth_threshold_above(metric_value, kpis_tresholds[metric_name],k=0.01)
+            elif metric_name in ['pdr', 'lifetime']:
+                score += kpis_weights[metric_name] * smooth_threshold_below(metric_value, kpis_tresholds[metric_name])
         return score
     except Exception as e:
         print(e)
@@ -150,7 +156,7 @@ def compute_score(kpis):
 # to be called by the gp_minimize function
 def efficience_function(parameters):
     ALL_SCORES
-    global args, ALL_SCORES
+    global args, ALL_SCORES, metrics
 
     config_name = 'config_{0}.json'.format(args.output_folder)
     settings = load_config()
@@ -213,6 +219,10 @@ if args.experiment_type == 'minimization':
                     (0.5, 0.7)],   # EPSLON_THRESHOLD   
                 )
 
+    with open('./all_metrics.json', 'w') as f:
+        json.dump(metrics, f)
+
+    time.sleep(10)
 
     print('Optimal set of parameters\n')
     parameters_to_save = {}
@@ -297,6 +307,6 @@ else:
             # to be computed
             'comulative reward': None
         }
-        with open(os.path.join(curr_output_folder_path, 'final_results'), 'w') as f:
+        with open(os.path.join(curr_output_folder_path, 'final_results.json'), 'w') as f:
             json.dump(final_results, f, indent=4)
         time.sleep(2)
