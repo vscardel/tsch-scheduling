@@ -155,7 +155,6 @@ def compute_score(kpis):
 
 # to be called by the gp_minimize function
 def efficience_function(parameters):
-    ALL_SCORES
     global args, ALL_SCORES, metrics
 
     config_name = 'config_{0}.json'.format(args.output_folder)
@@ -231,7 +230,7 @@ if args.experiment_type == 'minimization':
         print('{0}: {1}\n'.format(paramater, current_value))
         parameters_to_save[paramater] = current_value
 
-    with open('./optimal_set_of_paramaters.json', 'w') as f:
+    with open('./{0}_parameters'.format(args.of), 'w') as f:
         json.dump(parameters_to_save, f)
 
     print('Best value: {0}'.format(min(res.func_vals)))
