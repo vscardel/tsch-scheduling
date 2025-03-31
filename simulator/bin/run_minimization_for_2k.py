@@ -5,14 +5,13 @@ import itertools
 
 # Lista de nomes para o argumento --of
 output_folders = [
-    "baseline_minization",
-    "traffic_minimization",
-    "queue_minimization",
-    "charge_minimization",
-    "traffic_queue_minimization",
-    "traffic_charge_minimization",
-    "queue_charge_minimization",
-    "traffic_queue_charge_minimization"
+    "traffic",
+    "queue",
+    "charge",
+    "traffic_queue",
+    "traffic_charge",
+    "queue_charge",
+    "traffic_queue_charge"
 ]
 
 
@@ -34,9 +33,14 @@ base_command = [
 ]
 
 def run_experiment(output_folder):
-    """Executa um experimento com um valor especifico de --of."""
-    command = base_command + ["-of", output_folder] 
-    print("Iniciando experimento com --of {0}".format(output_folder))
+    factor_combinations = output_folder.split('_')  
+    combination_command = ''
+    for combination in factor_combinations:
+        combination_command += (combination + ',')
+    combination_command = combination_command[:-1]
+    command = base_command + ["-of", output_folder, "-fc", combination_command] 
+    print(command)
+    print("Iniciando experimento com --of {0} e --fc {1}".format(output_folder, combination_command))
     subprocess.Popen(command)
 
 if __name__ == "__main__":
