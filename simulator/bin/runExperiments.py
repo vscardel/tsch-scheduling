@@ -89,6 +89,11 @@ def configure_settings(settings, parameters):
     settings['settings']['regular']['sf_class'] = args.sched_function
     settings['settings']['regular']['conn_class'] = args.conn_class
     settings['settings']['regular']['exec_numSlotframesPerRun'] = args.num_slots
+    factor_combinations = args.factor_combinations
+    if not factor_combinations:
+        settings['settings']['regular']['factorial_combinations'] = ['traffic', 'queue', 'charge']
+    else:
+        settings['settings']['regular']['factorial_combinations'] = factor_combinations.split(',')
     settings['log_directory_name']= args.output_folder
     settings['get_sync_node_info'] = args.sync_required
 
@@ -202,6 +207,12 @@ parser.add_argument('-cc','--conn_class', type=str, help='connectivity_matrix', 
 parser.add_argument('-nslots','--num_slots', type=int, help='number of slotframes (time) of simulation', required=True)
 parser.add_argument('-is_min','--experiment_type', type=str, help='determines the time of experiment (minimization or 2^k)', required=True)
 
+parser.add_argument(
+    '-fc', '--factor_combinations',
+    help='List of factor combinations',
+    type=str,
+    required=False
+)
 
 
 args = parser.parse_args()
