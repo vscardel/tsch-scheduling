@@ -125,14 +125,6 @@ class SchedulingFunctionQlearning(SchedulingFunctionBase):
 
         if preferred_parent and self.mote.clear_to_send_EBs_DATA():
 
-            # baseline case (random action 50% chance)
-            if not self.settings.factorial_combinations:
-                print('baseline')
-                action = random.choice([0, 1, 2])
-                self.take_random_action(preferred_parent, action, cellopt, method = 'baseline')
-                return 
-            
-            # if there are factors to use, run Q-learning as normal
             self.EPISODE = self.EPISODE + 1
             if self.EPISODE % 100 == 0:
                 self.save_qlearning_stats()
@@ -183,20 +175,12 @@ class SchedulingFunctionQlearning(SchedulingFunctionBase):
                 cell_option      = cellopt,
             )
         elif action == 1:
-            if method == 'baseline':
-                self.sixp_interface_delete(
-                    preferred_parent = preferred_parent,
-                    num_cells        = 1,
-                    cell_option      = cellopt,
-                    method=method
-                )
-            else:
-                self.sixp_interface_delete(
-                    preferred_parent = preferred_parent,
-                    num_cells        = 1,
-                    cell_option      = cellopt,
-                    method=method
-                )
+            self.sixp_interface_delete(
+                preferred_parent = preferred_parent,
+                num_cells        = 1,
+                cell_option      = cellopt,
+                method=method
+            )
 
     def compute_next_state(self, factorial_combinations):
         state = {}
@@ -1149,15 +1133,7 @@ class SchedulingFunctionQlearning(SchedulingFunctionBase):
             method = None
         ):
 
-        if method == 'baseline':
-            cells_to_delete = self._create_occupied_cell_list(
-            neighbor      = preferred_parent,
-            cell_options  = cell_option,
-            cell_list_len = self.DEFAULT_CELL_LIST_LEN
-        )
-        else:
-            # apply optmization of removing onl unused cells
-            cells_to_delete = self._get_unused_cells(cell_option)
+        cells_to_delete = self._get_unused_cells(cell_option)
         if num_cells > len(cells_to_delete):
             num_cells = 1
 

@@ -29,6 +29,8 @@ from . import SimLog
 from . import Connectivity
 from . import SimConfig
 
+from SimEngine.Mote.scheduling_functions.Qlearning import SchedulingFunctionQlearning
+
 # =========================== defines =========================================
 
 # =========================== body ============================================
@@ -322,7 +324,10 @@ class DiscreteEventEngine(threading.Thread):
 
     def save_qlearning_stats(self):
         for mote in self.motes:
-            self._save_qlearning_mote_stat(mote)
+            if isinstance(mote.sf, SchedulingFunctionQlearning):
+                self._save_qlearning_mote_stat(mote)
+            else:
+                break
 
     def _save_qlearning_mote_stat(self, mote):
         current_id = mote.id

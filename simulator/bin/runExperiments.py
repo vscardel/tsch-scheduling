@@ -275,7 +275,7 @@ else:
         all_combinations.append(current_combination)
 
     all_combinations.sort(key=len)
-    all_combinations.reverse()
+    # all_combinations.reverse()
     # run each combination
     for factor_combination in all_combinations:
         # empty combination
@@ -288,6 +288,9 @@ else:
         settings = configure_settings(settings, parameters_list)
         settings['log_directory_name'] = output_folder
         settings['settings']['regular']['factorial_combinations'] = factor_combination   
+        #baseline runs MSF
+        if not factor_combination:
+            settings['settings']['regular']['sf_class'] = 'MSF'
         save_curr_run_config(config_name, settings)
         settings = convert_types(settings)   
         os.system('python2 runSim.py --config {0}'.format(config_name))
