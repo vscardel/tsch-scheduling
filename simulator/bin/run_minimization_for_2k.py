@@ -22,7 +22,7 @@ MAX_PARALLEL_JOBS = min(len(output_folders), multiprocessing.cpu_count())
 base_command = [
     "python2", "runExperiments.py",
     "-nc", "1",
-    "-nr", "1",
+    "-nr", "3",
     "-cb", "50",
     "-sf", "Qlearning",
     "-app", "random",

@@ -44,10 +44,10 @@ metrics_vector_position = [
 #hotspot scoring function
 
 kpis_weights = {
-    'latency': 0.3,
-    'pdr': 0.1,
-    'lifetime': 0.3,
-    'join_time': 0.3
+    'latency': 0.25,
+    'pdr': 0.25,
+    'lifetime': 0.25,
+    'join_time': 0.25
 }
 
 kpis_tresholds = {
@@ -82,6 +82,16 @@ def load_config():
         settings = json.loads(json_string)
     return settings
 
+def load_optimal_parameters(factor_combination):
+    paramaters = None
+    parameters_list = [None] * len(parameters_position)
+    with open('./{0}_parameters.json'.format(factor_combination), 'r') as f:
+        parameters = json.load(f)
+        # for compatibility
+        for position, name in enumerate(parameters_position):
+            parameters_list[position] = parameters[name]
+    return parameters_list
+
 def configure_settings(settings, parameters):
     settings['settings']['combination']['exec_numMotes'] = args.combinations
     settings['execution']['numCPUs'] = args.num_cpus
@@ -98,9 +108,10 @@ def configure_settings(settings, parameters):
     settings['get_sync_node_info'] = args.sync_required
 
     # Configure simulator with the parameters
-    for position, parameter_name in enumerate(parameters_position):
-        parameter_value = parameters[position]
-        settings['settings']['regular'][parameter_name] = parameter_value
+    if parameters:
+        for position, parameter_name in enumerate(parameters_position):
+            parameter_value = parameters[position]
+            settings['settings']['regular'][parameter_name] = parameter_value
     return settings
 
 def save_curr_run_config(config_name, settings):
@@ -125,41 +136,49 @@ def load_kpis(folder_path, num_motes):
     return kpis
 
 def compute_score(kpis):
-    latency = kpis['0']['global-stats']['e2e-upstream-latency'][0]['mean']
-    #convert join_time to seconds
-    join_time = kpis['0']['global-stats']["joining-time"][0]['mean'] / 100
-    network_lifetime = kpis['0']['global-stats']['network_lifetime'][0]['min']
-    packet_delivery_ratio = kpis['0']['global-stats']['e2e-upstream-delivery'][0]['value']
+    scores = []
+    for run in kpis:
+        #seconds
+        latency = kpis[run]['global-stats']['e2e-upstream-latency'][0]['mean']
+        #convert join_time to seconds
+        join_time = kpis[run]['global-stats']["joining-time"][0]['mean'] / 100
+        #years
+        network_lifetime = kpis[run]['global-stats']['network_lifetime'][0]['min']
+        
+        packet_delivery_ratio = kpis[run]['global-stats']['e2e-upstream-delivery'][0]['value']
 
-    metrics['latencies'].append(latency)
-    metrics['pdrs'].append(packet_delivery_ratio)
-    metrics['lifetimes'].append(network_lifetime)
-    metrics['join_times'].append(join_time)
+        metrics['latencies'].append(latency)
+        metrics['pdrs'].append(packet_delivery_ratio)
+        metrics['lifetimes'].append(network_lifetime)
+        metrics['join_times'].append(join_time)
 
-    try:
-        metrics_vector = [
-            (latency, 'latency'), 
-            (join_time, 'join_time'), 
-            (network_lifetime, 'lifetime'), 
-            (packet_delivery_ratio, 'pdr')
-        ]
-        score = 0.0
-        for metric in metrics_vector:
-            metric_value, metric_name = metric[0],metric[1]
-            if metric_name == 'latency':
-                score += kpis_weights[metric_name] * smooth_threshold_above(metric_value, kpis_tresholds[metric_name])
-            if metric_name == 'join_time':
-                score += kpis_weights[metric_name] * smooth_threshold_above(metric_value, kpis_tresholds[metric_name],k=0.01)
-            elif metric_name in ['pdr', 'lifetime']:
-                score += kpis_weights[metric_name] * smooth_threshold_below(metric_value, kpis_tresholds[metric_name])
-        return score
-    except Exception as e:
-        print(e)
-        print('Failed to calculate score. Returning MAX VALUE.')
-        return None
+        try:
+            metrics_vector = [
+                (latency, 'latency'), 
+                (join_time, 'join_time'), 
+                (network_lifetime, 'lifetime'), 
+                (packet_delivery_ratio, 'pdr')
+            ]
+            score = 0.0
+            for metric in metrics_vector:
+                metric_value, metric_name = metric[0],metric[1]
+                if metric_name == 'latency':
+                    score += kpis_weights[metric_name] * smooth_threshold_above(metric_value, kpis_tresholds[metric_name])
+                if metric_name == 'join_time':
+                    score += kpis_weights[metric_name] * smooth_threshold_above(metric_value, kpis_tresholds[metric_name],k=0.01)
+                elif metric_name in ['pdr', 'lifetime']:
+                    score += kpis_weights[metric_name] * smooth_threshold_below(metric_value, kpis_tresholds[metric_name])
+            scores.append(score)
+        except Exception as e:
+            print(e)
+            print('Failed to calculate score. Returning MAX VALUE.')
+            return None
+    return scores
 
 # to be called by the gp_minimize function
 def efficience_function(parameters):
+    import ipdb;
+    ipdb.set_trace()    
     global args, ALL_SCORES, metrics
 
     config_name = 'config_{0}.json'.format(args.output_folder)
@@ -183,11 +202,12 @@ def efficience_function(parameters):
     kpis = load_kpis(curr_output_folder_path, num_motes)
                 
     if kpis:
-        score = compute_score(kpis)
+        scores = compute_score(kpis)
+        mean_scores = sum(scores)/float(len(scores))
         remove_results_folder(curr_output_folder_path)
-        if score:
-            ALL_SCORES.append(score)
-            return score
+        if mean_scores:
+            ALL_SCORES.append(mean_scores)
+            return mean_scores
         return MAX_FUNCTION_VALUE
     return MAX_FUNCTION_VALUE
 
@@ -227,10 +247,8 @@ if args.experiment_type == 'minimization':
                     #    (50, 100),   # MAX_TX_CELLS_PASSED
                     #    (50, 100),   # MAX_RX_CELLS_PASSED
                     (0.5, 0.7)],   # EPSLON_THRESHOLD   
+                    n_calls=25
                 )
-
-    with open('./all_metrics.json', 'w') as f:
-        json.dump(metrics, f)
 
     time.sleep(10)
 
@@ -241,7 +259,7 @@ if args.experiment_type == 'minimization':
         print('{0}: {1}\n'.format(paramater, current_value))
         parameters_to_save[paramater] = current_value
 
-    with open('./{0}_parameters'.format(args.of), 'w') as f:
+    with open('./{0}_parameters.json'.format(args.output_folder), 'w') as f:
         json.dump(parameters_to_save, f)
 
     print('Best value: {0}'.format(min(res.func_vals)))
@@ -265,13 +283,6 @@ if args.experiment_type == 'minimization':
     plt.savefig("convergence_plot{0}.png".format(random_num))
 else:
     print('lets do the 2^k factorial experiment')    
-    paramaters = None
-    parameters_list = [None] * len(parameters_position)
-    with open('./optimal_set_of_paramaters.json', 'r') as f:
-        parameters = json.load(f)
-        # for compatibility
-        for position, name in enumerate(parameters_position):
-            parameters_list[position] = parameters[name]
 
     # build all possibilities of factors
     factors = ['traffic', 'queue', 'charge']
@@ -285,38 +296,49 @@ else:
         all_combinations.append(current_combination)
 
     all_combinations.sort(key=len)
-    # all_combinations.reverse()
+    all_combinations.reverse()
     # run each combination
     for factor_combination in all_combinations:
+
         # empty combination
         if not factor_combination:
             output_folder = 'baseline'
+            parameters_list = []
         else:
             output_folder = '_'.join(factor_combination)
+            parameters_list = load_optimal_parameters('_'.join(factor_combination))
+
         config_name = 'config_{0}.json'.format(output_folder)
         settings = load_config()
         settings = configure_settings(settings, parameters_list)
         settings['log_directory_name'] = output_folder
         settings['settings']['regular']['factorial_combinations'] = factor_combination   
+
         #baseline runs MSF
         if not factor_combination:
             settings['settings']['regular']['sf_class'] = 'MSF'
+
         save_curr_run_config(config_name, settings)
         settings = convert_types(settings)   
+
         os.system('python2 runSim.py --config {0}'.format(config_name))
+
         curr_output_folder_path = os.path.join(
             'simData',
             output_folder,
             'exec_numMotes_{0}'.format(args.combinations[0])
         )
+
         os.system('python2 compute_kpis.py --subfolder {0}'.format(curr_output_folder_path))
         os.system('python2 plot.py --inputfolder {0}'.format(curr_output_folder_path))
+
         import time 
         time.sleep(10)
+
         kpis = load_kpis(curr_output_folder_path, args.combinations[0])
-        score = compute_score(kpis)
+        scores = compute_score(kpis)
         final_results = {
-            'score': score, 
+            'score': scores, 
             # to be computed
             'comulative reward': None
         }
