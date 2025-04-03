@@ -196,8 +196,6 @@ def efficience_function(parameters):
                 
     if kpis:
         scores = compute_score(kpis)
-        import ipdb;
-        ipdb.set_trace()
         mean_scores = sum(scores)/float(len(scores))
         remove_results_folder(curr_output_folder_path)
         if mean_scores:
@@ -290,6 +288,8 @@ else:
             if index:
                 current_combination.append(factors[i])
         all_combinations.append(current_combination)
+
+    all_combinations.append(['qlearningSBRC24'])
 
     all_combinations.sort(key=len)
     all_combinations.reverse()
