@@ -74,7 +74,6 @@ class SchedulingFunctionQlearningSBRC24(SchedulingFunctionBase):
         self.SLOTFRAME_INTERVAL_SIZE = self.settings.SLOTFRAME_INTERVAL_SIZE
         self.MAX_TX_CELLS_PASSED = self.settings.MAX_TX_CELLS_PASSED
         self.MAX_RX_CELLS_PASSED = self.settings.MAX_RX_CELLS_PASSED
-        self.DISCRETIZE_ENERGY_PARAMETER = self.settings.DISCRETIZE_ENERGY_PARAMETER
 
     def start(self):
         slotframe_0 = self.mote.tsch.get_slotframe(0)
@@ -391,7 +390,7 @@ class SchedulingFunctionQlearningSBRC24(SchedulingFunctionBase):
         return 0
     
     def compute_discrete_energy_left(self,energy_left):
-        if energy_left >= self.remaining_battery * self.DISCRETIZE_ENERGY_PARAMETER:
+        if energy_left >= 500:
             return 1
         return 0
 

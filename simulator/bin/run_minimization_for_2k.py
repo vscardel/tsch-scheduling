@@ -11,7 +11,8 @@ output_folders = [
     "traffic_queue",
     "traffic_charge",
     "queue_charge",
-    "traffic_queue_charge"
+    "traffic_queue_charge",
+    'qlearningSBRC24'
 ]
 
 
@@ -34,13 +35,17 @@ base_command = [
 
 def run_experiment(output_folder):
     factor_combinations = output_folder.split('_')  
-    combination_command = ''
-    for combination in factor_combinations:
-        combination_command += (combination + ',')
-    combination_command = combination_command[:-1]
-    command = base_command + ["-of", output_folder, "-fc", combination_command] 
+    if factor_combinations[0] == 'qlearningSBRC24':
+        base_command[9] = 'QlearningSBRC24'
+        command = base_command + ["-of", output_folder]
+    else:
+        combination_command = ''
+        for combination in factor_combinations:
+            combination_command += (combination + ',')
+        combination_command = combination_command[:-1]
+        command = base_command + ["-of", output_folder, "-fc", combination_command] 
     print(command)
-    print("Iniciando experimento com --of {0} e --fc {1}".format(output_folder, combination_command))
+    print("Iniciando experimento com --of {0} e --fc {1}".format(output_folder, command))
     subprocess.Popen(command)
 
 if __name__ == "__main__":

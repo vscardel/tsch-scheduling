@@ -2,6 +2,7 @@ import argparse
 import json
 import os
 import shutil
+import random
 import itertools
 import matplotlib.pyplot as plt
 import numpy as np
@@ -113,54 +114,6 @@ def configure_settings(settings, parameters):
     return settings
 
 
-def generate_qlearning_sbrc24_data():
-    output_folder = 'qlearningSBRC24'
-    config_name = 'config_{0}.json'.format(output_folder) 
-
-    settings = load_config()
-    settings = configure_settings(settings, [])
-    settings['log_directory_name'] = output_folder
-
-    settings['settings']['regular']['sf_class'] = 'QlearningSBRC24'
-
-    settings['settings']['regular']['ALFA'] = 0.7
-    settings['settings']['regular']['BETA'] = 0.3
-    settings['settings']['regular']['EPSLON_DECAY_RATE'] = 0.01
-    settings['settings']['regular']['MAX_TX_CELLS_PASSED'] = 100
-    settings['settings']['regular']['MAX_RX_CELLS_PASSED'] = 100
-    settings['settings']['regular']['SLOTFRAME_INTERVAL_SIZE'] = 10
-    settings['settings']['regular']['DISCRETIZE_ENERGY_PARAMETER'] = 0.5
-    settings['execution']['numRuns'] = args.num_runs
-
-    save_curr_run_config(config_name, settings)
-    settings = convert_types(settings)  
-    save_curr_run_config(config_name, settings)
-
-    os.system('python2 runSim.py --config {0}'.format(config_name))
-
-    curr_output_folder_path = os.path.join(
-        'simData',
-        output_folder,
-        'exec_numMotes_{0}'.format(args.combinations[0])
-    )
-
-    os.system('python2 compute_kpis.py --subfolder {0}'.format(curr_output_folder_path))
-    os.system('python2 plot.py --inputfolder {0}'.format(curr_output_folder_path))
-
-    import time 
-    time.sleep(10)
-
-    kpis = load_kpis(curr_output_folder_path, args.combinations[0])
-    scores = compute_score(kpis)
-    final_results = {
-        'score': scores, 
-        # to be computed
-        'comulative reward': None
-    }
-    with open(os.path.join(curr_output_folder_path, 'final_results.json'), 'w') as f:
-        json.dump(final_results, f, indent=4)
-    time.sleep(2)
-
 def save_curr_run_config(config_name, settings):
     with open(config_name, 'w') as f:
         json.dump(settings, f, indent=4)
@@ -243,6 +196,8 @@ def efficience_function(parameters):
                 
     if kpis:
         scores = compute_score(kpis)
+        import ipdb;
+        ipdb.set_trace()
         mean_scores = sum(scores)/float(len(scores))
         remove_results_folder(curr_output_folder_path)
         if mean_scores:
@@ -307,11 +262,23 @@ if args.experiment_type == 'minimization':
     ys = ALL_SCORES
     xs = [i+1 for i in range(len(ALL_SCORES))]  # Evaluation numbers (x-axis)
 
+    my_plot = plt.plot(xs, ys ,color='red', linewidth=2)
+    plt.scatter(xs, ys, color='red', s=50, edgecolors='black', zorder=3)
+    plt.title("Optimization Convergence")
+    plt.xlabel("Number of Evaluations")
+    plt.ylabel("Minimum Objective Function Value")
+    plt.xticks(range(1, len(ALL_SCORES)+1, 1))  
+    random_num = random.randint(1, 50)
+    plt.savefig("all_values_convergence{0}.png".format(random_num))
+
+    ax = plot_convergence(res)
+    ax.set_title("Optimization Convergence")
+    ax.set_xlabel("Number of Evaluations")
+    ax.set_ylabel("Minimum Objective Function Value")
+    plt.savefig("convergence_plot{0}.png".format(random_num))
+
 else:
     print('lets do the 2^k factorial experiment')   
-
-    # generate q-learning-sbrc24 metrics.
-    generate_qlearning_sbrc24_data()
 
     # build all possibilities of factors
     factors = ['traffic', 'queue', 'charge']
