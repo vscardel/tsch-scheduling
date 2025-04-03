@@ -5,7 +5,6 @@ import shutil
 import itertools
 import matplotlib.pyplot as plt
 import numpy as np
-import random
 import time
 
 from skopt import gp_minimize
@@ -49,12 +48,11 @@ kpis_weights = {
     'lifetime': 0.25,
     'join_time': 0.25
 }
-
 kpis_tresholds = {
-    'latency': 0.54,
-    'pdr': 0.98,
-    'lifetime': 0.49,
-    'join_time': 880,
+    'latency': 3, #s
+    'pdr': 0.95, #%|
+    'lifetime': 3, #y
+    'join_time': 1245,#s
 }
 
 metrics = {
@@ -114,6 +112,55 @@ def configure_settings(settings, parameters):
             settings['settings']['regular'][parameter_name] = parameter_value
     return settings
 
+
+def generate_qlearning_sbrc24_data():
+    output_folder = 'qlearningSBRC24'
+    config_name = 'config_{0}.json'.format(output_folder) 
+
+    settings = load_config()
+    settings = configure_settings(settings, [])
+    settings['log_directory_name'] = output_folder
+
+    settings['settings']['regular']['sf_class'] = 'QlearningSBRC24'
+
+    settings['settings']['regular']['ALFA'] = 0.7
+    settings['settings']['regular']['BETA'] = 0.3
+    settings['settings']['regular']['EPSLON_DECAY_RATE'] = 0.01
+    settings['settings']['regular']['MAX_TX_CELLS_PASSED'] = 100
+    settings['settings']['regular']['MAX_RX_CELLS_PASSED'] = 100
+    settings['settings']['regular']['SLOTFRAME_INTERVAL_SIZE'] = 10
+    settings['settings']['regular']['DISCRETIZE_ENERGY_PARAMETER'] = 0.5
+    settings['execution']['numRuns'] = args.num_runs
+
+    save_curr_run_config(config_name, settings)
+    settings = convert_types(settings)  
+    save_curr_run_config(config_name, settings)
+
+    os.system('python2 runSim.py --config {0}'.format(config_name))
+
+    curr_output_folder_path = os.path.join(
+        'simData',
+        output_folder,
+        'exec_numMotes_{0}'.format(args.combinations[0])
+    )
+
+    os.system('python2 compute_kpis.py --subfolder {0}'.format(curr_output_folder_path))
+    os.system('python2 plot.py --inputfolder {0}'.format(curr_output_folder_path))
+
+    import time 
+    time.sleep(10)
+
+    kpis = load_kpis(curr_output_folder_path, args.combinations[0])
+    scores = compute_score(kpis)
+    final_results = {
+        'score': scores, 
+        # to be computed
+        'comulative reward': None
+    }
+    with open(os.path.join(curr_output_folder_path, 'final_results.json'), 'w') as f:
+        json.dump(final_results, f, indent=4)
+    time.sleep(2)
+
 def save_curr_run_config(config_name, settings):
     with open(config_name, 'w') as f:
         json.dump(settings, f, indent=4)
@@ -144,13 +191,8 @@ def compute_score(kpis):
         join_time = kpis[run]['global-stats']["joining-time"][0]['mean'] / 100
         #years
         network_lifetime = kpis[run]['global-stats']['network_lifetime'][0]['min']
-        
-        packet_delivery_ratio = kpis[run]['global-stats']['e2e-upstream-delivery'][0]['value']
 
-        metrics['latencies'].append(latency)
-        metrics['pdrs'].append(packet_delivery_ratio)
-        metrics['lifetimes'].append(network_lifetime)
-        metrics['join_times'].append(join_time)
+        packet_delivery_ratio = kpis[run]['global-stats']['e2e-upstream-delivery'][0]['value']
 
         try:
             metrics_vector = [
@@ -176,9 +218,7 @@ def compute_score(kpis):
     return scores
 
 # to be called by the gp_minimize function
-def efficience_function(parameters):
-    import ipdb;
-    ipdb.set_trace()    
+def efficience_function(parameters): 
     global args, ALL_SCORES, metrics
 
     config_name = 'config_{0}.json'.format(args.output_folder)
@@ -267,22 +307,11 @@ if args.experiment_type == 'minimization':
     ys = ALL_SCORES
     xs = [i+1 for i in range(len(ALL_SCORES))]  # Evaluation numbers (x-axis)
 
-    my_plot = plt.plot(xs, ys ,color='red', linewidth=2)
-    plt.scatter(xs, ys, color='red', s=50, edgecolors='black', zorder=3)
-    plt.title("Optimization Convergence")
-    plt.xlabel("Number of Evaluations")
-    plt.ylabel("Minimum Objective Function Value")
-    plt.xticks(range(1, len(ALL_SCORES)+1, 1))  
-    random_num = random.randint(1, 50)
-    plt.savefig("all_values_convergence{0}.png".format(random_num))
-
-    ax = plot_convergence(res)
-    ax.set_title("Optimization Convergence")
-    ax.set_xlabel("Number of Evaluations")
-    ax.set_ylabel("Minimum Objective Function Value")
-    plt.savefig("convergence_plot{0}.png".format(random_num))
 else:
-    print('lets do the 2^k factorial experiment')    
+    print('lets do the 2^k factorial experiment')   
+
+    # generate q-learning-sbrc24 metrics.
+    generate_qlearning_sbrc24_data()
 
     # build all possibilities of factors
     factors = ['traffic', 'queue', 'charge']
@@ -313,7 +342,7 @@ else:
         settings = configure_settings(settings, parameters_list)
         settings['log_directory_name'] = output_folder
         settings['settings']['regular']['factorial_combinations'] = factor_combination   
-
+        
         #baseline runs MSF
         if not factor_combination:
             settings['settings']['regular']['sf_class'] = 'MSF'

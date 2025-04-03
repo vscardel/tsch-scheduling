@@ -35,7 +35,7 @@ def compute_percent_contribution():
 
 def compute_dataframe_effects(factors_score):
     for factor_name, score in factors_score.items():
-        if factor_name != 'baseline':
+        if factor_name not in ('baseline', 'qlearningSBRC24'):
             function_name = f'{factor_name}_effect'
             globals()[function_name](factors_score)
             compute_percent_contribution()
@@ -162,6 +162,9 @@ def read_scores():
     experiment_dirs = os.listdir('simData')
     factors_scores = {}
     for dir in experiment_dirs:
+        #ignore q-learningsbrc24
+        if 'qlearning' in dir:
+            continue
         curr_path = os.path.join('./simData', dir, 'exec_numMotes_50','final_results.json')
         try:
             with open(curr_path, 'r') as f:
@@ -170,7 +173,7 @@ def read_scores():
                     all_scores.append(score)
                 curr_score = sum(results['score'])
                 factors_scores[dir] = curr_score
-                if dir != 'baseline':
+                if dir not in ('baseline'):
                     input_anova[dir] = {
                         'num_replicas': len(results['score']),
                         'total_score': curr_score,

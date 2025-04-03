@@ -23,6 +23,8 @@ class SchedulingFunctionQlearningSBRC24(SchedulingFunctionBase):
     used_cells = []
     QUEUE_OVERFLOW = False
 
+    num_packets_in_current_episode = 0
+
     #Q-learning
     current_state = (0,0,0)
     EPSLON = None
@@ -105,17 +107,28 @@ class SchedulingFunctionQlearningSBRC24(SchedulingFunctionBase):
         pass # do nothing
 
     def indication_tx_cell_elapsed(self, cell, sent_packet):
-        if bool(sent_packet):
+        if self.mote.dagRoot:
+            return
+        if not self._is_minimal_cell(cell):
             self.TX_CELLS_PASSED = self.TX_CELLS_PASSED + 1
-        if self.TX_CELLS_PASSED % self.MAX_TX_CELLS_PASSED == 0:
-            self.adapt_to_traffic([d.CELLOPTION_TX])
-            self.TX_CELLS_PASSED = 0
+            if bool(sent_packet): 
+                self.num_packets_in_current_episode = self.num_packets_in_current_episode + 1
+            if (self.TX_CELLS_PASSED > 0 and \
+                    self.TX_CELLS_PASSED % self.MAX_TX_CELLS_PASSED == 0):
+                self.adapt_to_traffic([d.CELLOPTION_TX])
+                self.TX_CELLS_PASSED = 0
+
     def indication_rx_cell_elapsed(self, cell, received_packet):
-        if bool(received_packet):
+        if self.mote.dagRoot:
+            return
+        if not self._is_minimal_cell(cell):
             self.RX_CELLS_PASSED = self.RX_CELLS_PASSED + 1
-        if self.RX_CELLS_PASSED % self.MAX_RX_CELLS_PASSED == 0:
-            self.adapt_to_traffic([d.CELLOPTION_RX])
-            self.RX_CELLS_PASSED = 0
+            if bool(received_packet): 
+                self.num_packets_in_current_episode = self.num_packets_in_current_episode + 1
+            if (self.RX_CELLS_PASSED > 0 and \
+                    self.RX_CELLS_PASSED % self.MAX_RX_CELLS_PASSED == 0):
+                self.adapt_to_traffic([d.CELLOPTION_RX])
+                self.RX_CELLS_PASSED = 0
 
     def adapt_to_traffic(self, cellopt):
         if not self.mote.dagRoot:
@@ -135,7 +148,7 @@ class SchedulingFunctionQlearningSBRC24(SchedulingFunctionBase):
                     self._compute_charge()
                 )
 
-                if self.EPSLON < 0.85:
+                if self.EPSLON < 0.5:
                     action = self.return_best_q_action(self.map_state_to_number(self.current_state))
                 else:
                     action = random.choice([0,1,2])
@@ -977,7 +990,11 @@ class SchedulingFunctionQlearningSBRC24(SchedulingFunctionBase):
             num_cells
         ):
 
-        cells_to_delete = self._get_unused_cells(cell_option)
+        cells_to_delete = self._create_occupied_cell_list(
+            neighbor      = preferred_parent,
+            cell_options  = cell_option,
+            cell_list_len = self.DEFAULT_CELL_LIST_LEN
+        )
 
         if len(cells_to_delete) >= 1:
             callback = self._create_delete_request_callback(
