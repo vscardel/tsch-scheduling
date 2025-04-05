@@ -352,7 +352,7 @@ class DiscreteEventEngine(threading.Thread):
             self.pauseSem.release()
 
     def _actionEndSim(self):
-        self.save_qlearning_stats()
+        # self.save_qlearning_stats()
         with self.dataLock:
             self.goOn = False
 

@@ -289,10 +289,9 @@ else:
                 current_combination.append(factors[i])
         all_combinations.append(current_combination)
 
-    all_combinations.append(['qlearningSBRC24'])
-
     all_combinations.sort(key=len)
     all_combinations.reverse()
+    all_combinations.insert(0,['qlearningSBRC24'])
     # run each combination
     for factor_combination in all_combinations:
 
@@ -313,6 +312,8 @@ else:
         #baseline runs MSF
         if not factor_combination:
             settings['settings']['regular']['sf_class'] = 'MSF'
+        elif factor_combination == ['qlearningSBRC24']:
+            settings['settings']['regular']['sf_class'] = 'QlearningSBRC24'
 
         save_curr_run_config(config_name, settings)
         settings = convert_types(settings)   
