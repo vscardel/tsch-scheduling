@@ -50,10 +50,10 @@ kpis_weights = {
     'join_time': 0.25
 }
 kpis_tresholds = {
-    'latency': 3, #s
+    'latency': 1.5, #s
     'pdr': 0.95, #%|
-    'lifetime': 3, #y
-    'join_time': 1245,#s
+    'lifetime': 1, #y
+    'join_time': 1000,#s
 }
 
 metrics = {
