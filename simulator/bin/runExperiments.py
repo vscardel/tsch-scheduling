@@ -63,10 +63,10 @@ metrics = {
     'lifetimes': []
 }
 
-def smooth_threshold_above(x, T, k=10):
+def smooth_threshold_above(x, T, k=1):
     return 1 / (1 + np.exp(-k * (x - T)))
 
-def smooth_threshold_below(x, T, k=10):
+def smooth_threshold_below(x, T, k=1):
     return (1 - smooth_threshold_above(x, T, k))
 ########################
 
@@ -158,11 +158,14 @@ def compute_score(kpis):
             for metric in metrics_vector:
                 metric_value, metric_name = metric[0],metric[1]
                 if metric_name == 'latency':
-                    score += kpis_weights[metric_name] * smooth_threshold_above(metric_value, kpis_tresholds[metric_name])
+                    score += kpis_weights[metric_name] * smooth_threshold_above(metric_value, kpis_tresholds[metric_name], k = 1)
                 if metric_name == 'join_time':
-                    score += kpis_weights[metric_name] * smooth_threshold_above(metric_value, kpis_tresholds[metric_name],k=0.01)
-                elif metric_name in ['pdr', 'lifetime']:
-                    score += kpis_weights[metric_name] * smooth_threshold_below(metric_value, kpis_tresholds[metric_name])
+                    score += kpis_weights[metric_name] * smooth_threshold_above(metric_value, kpis_tresholds[metric_name],k=0.004)
+                elif metric_name =='pdr':
+                    score += kpis_weights[metric_name] * smooth_threshold_below(metric_value, kpis_tresholds[metric_name], k = 0.2)
+                elif metric_name == 'lifetime':
+                    score += kpis_weights[metric_name] * smooth_threshold_below(metric_value, kpis_tresholds[metric_name], k = 1)
+
             scores.append(score)
         except Exception as e:
             print(e)

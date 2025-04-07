@@ -458,7 +458,9 @@ class Tsch(object):
                 and
                 packet[u'mac'][u'dstMac'] != d.BROADCAST_ADDRESS
                 and
-                (isinstance(self.mote.sf, SchedulingFunctionMSF) or isinstance(self.mote.sf, SchedulingFunctionQlearning))
+                (isinstance(self.mote.sf, SchedulingFunctionMSF) or 
+                 isinstance(self.mote.sf, SchedulingFunctionQlearning),
+                 isinstance(self.mote.sf, SchedulingFunctionQlearningSBRC24))
                 and
                 not self.mote.sf.get_tx_cells(packet[u'mac'][u'dstMac'])
             ):

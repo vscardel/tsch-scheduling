@@ -127,6 +127,8 @@ class SchedulingFunctionQlearningSBRC24(SchedulingFunctionBase):
             preferred_parent = self.mote.rpl.getPreferredParent()
 
             if preferred_parent and self.mote.clear_to_send_EBs_DATA():
+                # import ipdb;
+                # ipdb.set_trace()
                 
                 self.EPISODE = self.EPISODE + 1
                 self.EPSLON = self.MIN_EPSLON + (self.MAX_EPSLON - self.MIN_EPSLON)*np.exp(-self.EPSLON_DECAY_RATE*self.EPISODE)
@@ -140,6 +142,8 @@ class SchedulingFunctionQlearningSBRC24(SchedulingFunctionBase):
                     self._compute_queue_ratio(),
                     self._compute_charge()
                 )
+
+                self.num_packets_in_current_episode = 0
 
                 print(next_state)
 
@@ -382,19 +386,19 @@ class SchedulingFunctionQlearningSBRC24(SchedulingFunctionBase):
 
     def discretize_queue_ratio(self,queue_ratio):
         average_queue_ratio = self._compute_queue_average_ratio(queue_ratio)
-        if queue_ratio >= average_queue_ratio:
+        if queue_ratio >= 0.04:
             return 1
         return 0
     
     def discretize_traffic(self,traffic):
         average_traffic = self._compute_average_traffic(traffic)
-        if traffic >= average_traffic:
+        if traffic >= 2:
             return 1
         return 0
     
     def discretize_energy(self,energy_left):
         average_energy_ratio = self._compute_average_energy_ratio(energy_left)
-        if energy_left > average_energy_ratio:
+        if energy_left > 500:
             return 1
         return 0
 
