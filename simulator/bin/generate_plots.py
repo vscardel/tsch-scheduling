@@ -3,7 +3,7 @@ import numpy as np
 import os
 import matplotlib.pyplot as plt
 
-from scipy.stats import tstd, t
+from scipy.stats import norm
 
 
 def generate_box_plots(data_lists, metric_label):
@@ -75,7 +75,10 @@ def generate_bar_plots(metrics_data, metric_label):
     for i in range(len(metrics_data)):
         mean_val = metrics_data[i][0]
         conf_interval = metrics_data[i][1]
-        conf_height = conf_interval[1] - conf_interval[0]
+        try:
+            conf_height = conf_interval[1] - conf_interval[0]
+        except:
+            conf_height = conf_interval
         bar_position = base_positions + i * barWidth
 
         plt.bar(
@@ -108,10 +111,12 @@ def generate_bar_plots(metrics_data, metric_label):
 
 
 def compute_confidence_interval(values, confidence=0.95):
-    sample_sd = tstd(values)
     n = len(values)
     sample_mean = np.mean(values)
-    return t.interval(confidence, n-1, sample_mean, sample_sd)
+    sample_sd = np.std(values, ddof=1)  # amostral
+    z_score = norm.ppf(1 - (1 - confidence) / 2)  # z para 95% ≈ 1.96
+    margin_error = z_score * (sample_sd / np.sqrt(n))
+    return (sample_mean - margin_error, sample_mean + margin_error)
 
 def load_kpis(folder_path, num_motes):
     kpis = None
@@ -182,7 +187,6 @@ if __name__ == '__main__':
     pdrs_tfq = get_metric_list('pdr', kpis_traffic_queue_charge)
     final_scores_tfq = load_scores(generate_folder_path('traffic_queue_charge'))
 
-
     latencies_qsbrc24= get_metric_list('latency', kpis_qlearningSBRC24)
     joins_time_qsbrc24 = get_metric_list('join_time', kpis_qlearningSBRC24)
     lifetimes_qsbrc24 = get_metric_list('lifetime', kpis_qlearningSBRC24)
@@ -225,6 +229,12 @@ if __name__ == '__main__':
         (np.mean(final_scores_qsbrc24), compute_confidence_interval(final_scores_qsbrc24)),
         (np.mean(final_scores_msf), compute_confidence_interval(final_scores_msf)),
     ]
+
+    generate_bar_plots(latencies_data, 'Latencies')
+    generate_bar_plots(join_time_data, 'Join Times')
+    generate_bar_plots(lifetime_data, 'Lifetimes')
+    generate_bar_plots(pdr_data, 'PDRS')
+    generate_bar_plots(score_data, 'Scores')
 
     generate_box_plots([latencies_tfq, latencies_qsbrc24, latencies_msf], 'Latencies')
     generate_box_plots([joins_time_tfq, joins_time_qsbrc24, joins_time_msf], 'Join Times')

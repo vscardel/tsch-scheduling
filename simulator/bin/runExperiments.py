@@ -144,9 +144,7 @@ def compute_score(kpis):
         join_time = kpis[run]['global-stats']["joining-time"][0]['mean'] / 100
         #years
         network_lifetime = kpis[run]['global-stats']['network_lifetime'][0]['min']
-
         packet_delivery_ratio = kpis[run]['global-stats']['e2e-upstream-delivery'][0]['value']
-
         try:
             metrics_vector = [
                 (latency, 'latency'), 
@@ -165,7 +163,6 @@ def compute_score(kpis):
                     score += kpis_weights[metric_name] * smooth_threshold_below(metric_value, kpis_tresholds[metric_name], k = 0.2)
                 elif metric_name == 'lifetime':
                     score += kpis_weights[metric_name] * smooth_threshold_below(metric_value, kpis_tresholds[metric_name], k = 1)
-
             scores.append(score)
         except Exception as e:
             print(e)

@@ -146,7 +146,7 @@ class SchedulingFunctionQlearningSBRC24(SchedulingFunctionBase):
                 self.num_packets_in_current_episode = 0
 
                 print(next_state)
-
+                is_random = False
                 if self.EPSLON < self.EPSLON_THRESHOLD:
                     action = self.return_best_q_action(self.map_state_to_number(self.current_state))
                 else:
@@ -160,7 +160,7 @@ class SchedulingFunctionQlearningSBRC24(SchedulingFunctionBase):
 
                 add_cells =  (discrete_queue) + (discrete_traffic) + (discrete_energy_left)  
                 remove_cells =  (1-discrete_queue) + (1-discrete_traffic) + (1-discrete_energy_left)  
-
+                
                 print('EPSLON')
                 print(self.EPSLON)
                 print('action')
@@ -179,7 +179,8 @@ class SchedulingFunctionQlearningSBRC24(SchedulingFunctionBase):
                         cell_option      = cellopt
                     )
                 
-
+                # import ipdb;
+                # ipdb.set_trace()
                 self.current_state = next_state
                 self.compute_q_table(self.current_state,next_state,action)
 
@@ -327,18 +328,29 @@ class SchedulingFunctionQlearningSBRC24(SchedulingFunctionBase):
     
     def _get_unused_cells(self,cell_option):
         preferred_parent = self.mote.rpl.getPreferredParent()
-        available_cells = [
-                        {"channelOffset":cell.channel_offset,
-                            "slotOffset":cell.slot_offset} 
-                        for cell in self.mote.tsch.get_cells(
-                        preferred_parent,
-                        self.SLOTFRAME_HANDLE
-                    )
-                if cell.options == cell_option]
+        if cell_option == d.CELLOPTION_TX:
+            available_cells = [
+                            {"channelOffset":cell.channel_offset,
+                                "slotOffset":cell.slot_offset} 
+                            for cell in self.mote.tsch.get_cells(
+                            preferred_parent,
+                            self.SLOTFRAME_HANDLE
+                        )
+                    if cell.options == cell_option and \
+                    float(cell.num_tx_ack )/ cell.num_tx >= 0.8]
+        else:
+            available_cells = [
+                            {"channelOffset":cell.channel_offset,
+                                "slotOffset":cell.slot_offset} 
+                            for cell in self.mote.tsch.get_cells(
+                            preferred_parent,
+                            self.SLOTFRAME_HANDLE
+                        )
+                    if cell.options == cell_option and \
+                    cell.num_rx > 0]
         unused_cells = []
         for cell in available_cells:
-            if cell not in self.used_cells:
-                unused_cells.append(cell)
+            unused_cells.append(cell)
         return unused_cells
     
 
@@ -386,13 +398,15 @@ class SchedulingFunctionQlearningSBRC24(SchedulingFunctionBase):
 
     def discretize_queue_ratio(self,queue_ratio):
         average_queue_ratio = self._compute_queue_average_ratio(queue_ratio)
-        if queue_ratio >= 0.04:
+        print(average_queue_ratio)
+        if queue_ratio >= 0.12:
             return 1
         return 0
     
     def discretize_traffic(self,traffic):
         average_traffic = self._compute_average_traffic(traffic)
-        if traffic >= 2:
+        print(average_traffic)
+        if traffic >= 3:
             return 1
         return 0
     
