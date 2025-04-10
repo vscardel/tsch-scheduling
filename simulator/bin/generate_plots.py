@@ -14,8 +14,9 @@ def generate_box_plots(data_lists, metric_label):
         (33/255, 133/255, 197/255, 0.7),  # Azul
         (224/255, 202/255, 60/255, 0.7),  # Amarelo
         (243/255, 66/255, 19/255, 0.7),   # Laranja avermelhado
+        (38/255, 166/255, 91/255, 0.7)
     ]
-    labels = ['Q_new', 'Q_old', 'MSF']
+    labels = ['Q-poisson', 'Q-static', 'MSF', 'EMSF']
 
     fig, ax = plt.subplots()
     box = ax.boxplot(
@@ -47,7 +48,7 @@ def generate_box_plots(data_lists, metric_label):
     elif metric_label == 'Lifetimes':
         plt.ylabel('Lifetimes (Years)')
     elif metric_label == 'PDRS':
-        plt.ylabel('PDRS (%)')
+        plt.ylabel('PDRS (\\%)')
     elif metric_label == 'Scores':
         plt.ylabel('')
     elif metric_label == 'Join Times':
@@ -67,8 +68,9 @@ def generate_bar_plots(metrics_data, metric_label):
         (33/255, 133/255, 197/255, 0.7),  # Azul
         (224/255, 202/255, 60/255, 0.7),  # Amarelo
         (243/255, 66/255, 19/255, 0.7),   # Laranja avermelhado
+        (38/255, 166/255, 91/255, 0.7)    # verde
     ]
-    labels = ['Q_new', 'Q_old', 'MSF']
+    labels = ['Q-poisson', 'Q-static', 'MSF', 'EMSF']
     
     base_positions = np.arange(1)
 
@@ -101,7 +103,7 @@ def generate_bar_plots(metrics_data, metric_label):
     elif metric_label == 'Lifetimes':
         plt.ylabel('Lifetimes (Years)')
     elif metric_label == 'PDRS':
-        plt.ylabel('PDRS (%)')
+        plt.ylabel('PDRS (\\%)')
     elif metric_label == 'Scores':
         plt.ylabel('')
     plt.legend()
@@ -181,6 +183,11 @@ if __name__ == '__main__':
         50
     )
 
+    kpis_emsf = load_kpis(
+        generate_folder_path('EMSF'),
+        50
+    )
+
     latencies_tfq = get_metric_list('latency', kpis_traffic_queue_charge)
     joins_time_tfq = get_metric_list('join_time', kpis_traffic_queue_charge)
     lifetimes_tfq = get_metric_list('lifetime', kpis_traffic_queue_charge)
@@ -199,10 +206,17 @@ if __name__ == '__main__':
     pdrs_msf = get_metric_list('pdr', kpis_msf)
     final_scores_msf = load_scores(generate_folder_path('baseline'))
 
+    latencies_emsf = get_metric_list('latency', kpis_emsf)
+    joins_time_emsf = get_metric_list('join_time', kpis_emsf)
+    lifetimes_emsf = get_metric_list('lifetime', kpis_emsf)
+    pdrs_emsf = get_metric_list('pdr', kpis_emsf)
+    final_scores_emsf = load_scores(generate_folder_path('traffic_queue_charge'))
+
     latencies_data = [
         (np.mean(latencies_tfq), compute_confidence_interval(latencies_tfq)),
         (np.mean(latencies_qsbrc24), compute_confidence_interval(latencies_qsbrc24)),
         (np.mean(latencies_msf), compute_confidence_interval(latencies_msf)),
+         (np.mean(latencies_emsf), compute_confidence_interval(latencies_emsf)),
     ]
 
 
@@ -210,24 +224,29 @@ if __name__ == '__main__':
         (np.mean(joins_time_tfq), compute_confidence_interval(joins_time_tfq)),
         (np.mean(joins_time_qsbrc24), compute_confidence_interval(joins_time_qsbrc24)),
         (np.mean(joins_time_msf), compute_confidence_interval(joins_time_msf)),
+         (np.mean(joins_time_emsf), compute_confidence_interval(joins_time_emsf)),
     ]
 
     lifetime_data = [
         (np.mean(lifetimes_tfq), compute_confidence_interval(lifetimes_tfq)),
         (np.mean(lifetimes_qsbrc24), compute_confidence_interval(lifetimes_qsbrc24)),
         (np.mean(lifetimes_msf), compute_confidence_interval(lifetimes_msf)),
+        (np.mean(lifetimes_emsf), compute_confidence_interval(lifetimes_emsf)),
     ]
 
     pdr_data = [
         (np.mean(pdrs_tfq), compute_confidence_interval(pdrs_tfq)),
         (np.mean(pdrs_qsbrc24), compute_confidence_interval(pdrs_qsbrc24)),
         (np.mean(pdrs_msf), compute_confidence_interval(pdrs_msf)),
+        (np.mean(pdrs_emsf), compute_confidence_interval(pdrs_emsf)),
+
     ]
 
     score_data = [
         (np.mean(final_scores_tfq), compute_confidence_interval(final_scores_tfq)),
         (np.mean(final_scores_qsbrc24), compute_confidence_interval(final_scores_qsbrc24)),
         (np.mean(final_scores_msf), compute_confidence_interval(final_scores_msf)),
+        (np.mean(final_scores_emsf), compute_confidence_interval(final_scores_emsf)),
     ]
 
     generate_bar_plots(latencies_data, 'Latencies')
@@ -236,10 +255,10 @@ if __name__ == '__main__':
     generate_bar_plots(pdr_data, 'PDRS')
     generate_bar_plots(score_data, 'Scores')
 
-    generate_box_plots([latencies_tfq, latencies_qsbrc24, latencies_msf], 'Latencies')
-    generate_box_plots([joins_time_tfq, joins_time_qsbrc24, joins_time_msf], 'Join Times')
-    generate_box_plots([lifetimes_tfq, lifetimes_qsbrc24, lifetimes_msf], 'Lifetimes')
-    generate_box_plots([pdrs_tfq, pdrs_qsbrc24, pdrs_msf], 'PDRS')
-    generate_box_plots([final_scores_tfq, final_scores_qsbrc24, final_scores_msf], 'Scores')
+    generate_box_plots([latencies_tfq, latencies_qsbrc24, latencies_msf, latencies_emsf], 'Latencies')
+    generate_box_plots([joins_time_tfq, joins_time_qsbrc24, joins_time_msf, joins_time_emsf], 'Join Times')
+    generate_box_plots([lifetimes_tfq, lifetimes_qsbrc24, lifetimes_msf, lifetimes_emsf], 'Lifetimes')
+    generate_box_plots([pdrs_tfq, pdrs_qsbrc24, pdrs_msf, pdrs_emsf], 'PDRS')
+    generate_box_plots([final_scores_tfq, final_scores_qsbrc24, final_scores_msf, final_scores_emsf], 'Scores')
 
 
