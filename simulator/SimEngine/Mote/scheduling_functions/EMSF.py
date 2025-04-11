@@ -1,8 +1,6 @@
 from __future__ import absolute_import
 # =========================== imports =========================================
 
-import itertools
-import math
 import netaddr
 import numpy as np
 import random
@@ -15,7 +13,7 @@ from pprint import pprint
 from SimEngine.Mote.sfBase import SchedulingFunctionBase
 
 
-class SchedulingFunctionQlearning(SchedulingFunctionBase):
+class SchedulingFunctionEMSF(SchedulingFunctionBase):
 
     SLOTFRAME_HANDLE = 1
     DEFAULT_CELL_LIST_LEN = 5
@@ -27,74 +25,15 @@ class SchedulingFunctionQlearning(SchedulingFunctionBase):
     QUEUE_OVERFLOW = False
 
     #poisson_computation
+    LAMBA = 0.0
     num_packets_in_current_episode = 0
-
-    #Q-learning
-    current_state = ()
-    EPSLON = None         
-    EPISODE = 0
-    Q_table = dict()
-    TX_CELLS_PASSED = 0
-    RX_CELLS_PASSED = 0
-    MAX_EPSLON = 1
-
-    #rewards weigths
-    WQ = 0.33
-    WE = 0.33
-    WT = 0.33
-
-    CUMULATIVE_REWARD = 0
-    TD_ERROR = 0
-    SUM_TD_ERROR = 0
-    AVERAGE_TD_ERROR_100 = 0
-    AVERAGE_CUMULATIVE_REWARD_100 = 0
-    QLEARNING_STATS = {
-        'AVERAGE_TD_ERROR': [],
-        'AVERAGE_CUMULATIVE_REWARD': []
-    }
-
-    #traffic estimate variables
-    TRAFFIC = 0
-    array_rxs_acks = []
-    prev_rx_ack = 0
-
-    #charge estimate variables
-    remaining_battery = 2821500
-    AVERAGE_ENERGY_CONSUMED = 0
-    array_energy_consumed = []
-
-    #queue estimate variables
-    AVERAGE_QUEUE_SIZE = 0
-    array_queue_ratio = []
-
     
     def __init__(self, mote):
-        super(SchedulingFunctionQlearning, self).__init__(mote)
+        super(SchedulingFunctionEMSF, self).__init__(mote)
         self.locked_slots         = set([])
         self.retry_count          = {}
-        self.ALFA = self.settings.ALFA
-        self.BETA = self.settings.BETA
-        self.EPSLON_DECAY_RATE = self.settings.EPSLON_DECAY_RATE
-        self.EPSLON_THRESHOLD = self.settings.EPSLON_THRESHOLD
-        self.MIN_EPSLON = self.settings.MIN_EPSLON
-        self.SLOTFRAME_INTERVAL_SIZE = self.settings.SLOTFRAME_INTERVAL_SIZE
-        self.MAX_TX_CELLS_PASSED = self.settings.MAX_TX_CELLS_PASSED
-        self.MAX_RX_CELLS_PASSED = self.settings.MAX_RX_CELLS_PASSED
-        self.STATE_SIZE = self.settings.STATE_SIZE
-        self.ACTION_STATE_SIZE = self.settings.ACTION_STATE_SIZE
-        self.LAMBDA = self.settings.LAMBDA
 
     def start(self):
-        self.name_to_compute_factor = {
-            "traffic": self._compute_traffic,
-            "queue": self._compute_queue_ratio,
-            "charge": self._compute_charge,
-         }
-        self.name_to_discretize_function = {
-            "traffic": self.discretize_traffic,
-            "queue": self.discretize_queue_ratio,
-            "charge": self.discretize_energy,
-         }
         slotframe_0 = self.mote.tsch.get_slotframe(0)
         self.mote.tsch.add_slotframe(
             slotframe_handle = self.SLOTFRAME_HANDLE,
@@ -108,107 +47,50 @@ class SchedulingFunctionQlearning(SchedulingFunctionBase):
             pass
         else:
             self.allocate_autonomous_rx_cell()
-            self.initialize_q_table(self.STATE_SIZE,self.ACTION_STATE_SIZE)
 
 
     #indicates the ending of a window of X slotframes
     #X = SimEngine.SLOTFRAME_PERIOD_SIZE
     def indication_slotframe_window_ending(self,slotframe_period_size):
-        pass
+        self.adapt_to_traffic()
 
-    def adapt_to_traffic(self, cellopt):
+    def adapt_to_traffic(self):
     # import ipdb;
     # ipdb.set_trace()
         if self.mote.dagRoot:
             return
+        
         preferred_parent = self.mote.rpl.getPreferredParent()
 
         if preferred_parent and self.mote.clear_to_send_EBs_DATA():
-
-            self.EPISODE = self.EPISODE + 1
-            if self.EPISODE % 100 == 0:
-                self.save_qlearning_stats()
-            self.EPSLON = self.MIN_EPSLON + (self.MAX_EPSLON - self.MIN_EPSLON)*np.exp(-self.EPSLON_DECAY_RATE*self.EPISODE)
-            
-            next_state = self.compute_next_state(self.settings.factorial_combinations)
-
-            self.LAMBDA = float(self.num_packets_in_current_episode) / self.MAX_RX_CELLS_PASSED
-
+            self.LAMBDA = float(self.num_packets_in_current_episode) / 10
             self.num_packets_in_current_episode = 0
-            
-            distribution = self._compute_poisson_packet_distribution(time_interval=self.MAX_RX_CELLS_PASSED)
+            distribution = self._compute_poisson_packet_distribution(time_interval=10)
+            num_packets_to_be_generated = self.compute_num_packets_to_be_generated(distribution)
+            dedicated_cells = self.mote.tsch.get_cells(
 
-            if self.EPSLON < self.EPSLON_THRESHOLD:
-                action = self.return_best_q_action(self.map_state_to_number(self.current_state))
+                mac_addr         = preferred_parent,
+                slotframe_handle = self.SLOTFRAME_HANDLE
+            )
+            num_tx_cells = len(
+                [cell for cell in dedicated_cells if cell.options == [d.CELLOPTION_TX]]
+            )
+            if num_packets_to_be_generated < num_tx_cells:
+                self.sixp_interface_delete(
+                    preferred_parent = preferred_parent,
+                    num_cells        = num_tx_cells - num_packets_to_be_generated,
+                    cell_option      = [d.CELLOPTION_TX]
+                )
             else:
-                action = random.choice([0,1,2])
-                self.take_random_action(preferred_parent, action, cellopt)
-                self.current_state = next_state
-                self.compute_q_table(self.current_state,next_state,action)
-                return
-            
-            if action == 0:
-                num_packets_to_be_generated = self.compute_num_packets_to_be_generated(distribution)
-                if num_packets_to_be_generated > 0:
-                    self.sixp_interface_add(
-                        preferred_parent = preferred_parent,
-                        num_cells        = num_packets_to_be_generated,
-                        cell_option      = cellopt,
-                    )
-            elif action == 1:
-                num_packets_to_remove = self.compute_num_packets_to_remove(self.LAMBDA, cellopt)
-                if num_packets_to_remove > 0:
-                    self.sixp_interface_delete(
-                        preferred_parent = preferred_parent,
-                        num_cells        = num_packets_to_remove,
-                        cell_option      = cellopt
-                    )
-            self.current_state = next_state
-            self.compute_q_table(self.current_state,next_state,action)
-
-    #be more conservative in random actions
-    def take_random_action(self, preferred_parent, action, cellopt, method = None):
-        if action == 0:
-            self.sixp_interface_add(
-                preferred_parent = preferred_parent,
-                num_cells        = 1,
-                cell_option      = cellopt,
-            )
-        elif action == 1:
-            self.sixp_interface_delete(
-                preferred_parent = preferred_parent,
-                num_cells        = 1,
-                cell_option      = cellopt,
-                method=method
-            )
-
-    def compute_next_state(self, factorial_combinations):
-        state = {}
-        for combination in factorial_combinations:
-            my_function = self.return_function_by_name(combination, self.name_to_compute_factor)
-            factor = my_function()
-            state[combination] = factor
-        return state
-    
-
-    def return_function_by_name(self, function_name, function_names):
-        function_name = function_names.get(function_name)
-        return function_name
-
-    def save_qlearning_stats(self):
-        self.QLEARNING_STATS['AVERAGE_TD_ERROR'].append(self.AVERAGE_TD_ERROR_100)
-        self.QLEARNING_STATS['AVERAGE_CUMULATIVE_REWARD'].append(self.AVERAGE_CUMULATIVE_REWARD_100)
+                self.sixp_interface_add(
+                    preferred_parent = preferred_parent,
+                    num_cells        = num_tx_cells + num_packets_to_be_generated,
+                    cell_option      = [d.CELLOPTION_TX]
+                )
 
     def stop(self):
         self.mote.tsch.delete_slotframe(self.SLOTFRAME_HANDLE)
-        self.EPSLON = 0
-        self.EPISODE = 0
-        self.CUMULATIVE_REWARD = 0
-        self.QLEARNING_STATS = {
-            'AVERAGE_TD_ERROR': [],
-            'AVERAGE_CUMULATIVE_REWARD': []
-        }
-        
+
 
     def indication_neighbor_added(self, neighbor_mac_addr):
         pass # do nothing
@@ -217,25 +99,20 @@ class SchedulingFunctionQlearning(SchedulingFunctionBase):
         if self.mote.dagRoot:
             return
         if not self._is_minimal_cell(cell):
-            self.TX_CELLS_PASSED = self.TX_CELLS_PASSED + 1
             if bool(sent_packet): 
                 self.num_packets_in_current_episode = self.num_packets_in_current_episode + 1
-            if (self.TX_CELLS_PASSED > 0 and \
-                    self.TX_CELLS_PASSED % self.MAX_TX_CELLS_PASSED == 0):
-                self.adapt_to_traffic([d.CELLOPTION_TX])
-                self.TX_CELLS_PASSED = 0
 
     def indication_rx_cell_elapsed(self, cell, received_packet):
         if self.mote.dagRoot:
             return
-        if not self._is_minimal_cell(cell):
-            self.RX_CELLS_PASSED = self.RX_CELLS_PASSED + 1
-            if bool(received_packet): 
-                self.num_packets_in_current_episode = self.num_packets_in_current_episode + 1
-            if (self.RX_CELLS_PASSED > 0 and \
-                    self.RX_CELLS_PASSED % self.MAX_RX_CELLS_PASSED == 0):
-                self.adapt_to_traffic([d.CELLOPTION_RX])
-                self.RX_CELLS_PASSED = 0
+        # if not self._is_minimal_cell(cell):
+        #     self.RX_CELLS_PASSED = self.RX_CELLS_PASSED + 1
+        #     # if bool(received_packet): 
+        #     #     self.num_packets_in_current_episode = self.num_packets_in_current_episode + 1
+        #     if (self.RX_CELLS_PASSED > 0 and \
+        #             self.RX_CELLS_PASSED % self.MAX_RX_CELLS_PASSED == 0):
+        #         # self.adapt_to_traffic([d.CELLOPTION_RX])
+        #         self.RX_CELLS_PASSED = 0
 
     def indication_queue_full(self):
         self.QUEUE_OVERFLOW = True
@@ -369,14 +246,6 @@ class SchedulingFunctionQlearning(SchedulingFunctionBase):
         else:
             return []
         
-    #Q-Learning
-    def generate_possible_states(self,num_state_variables):
-        all_states = []
-        for seq in itertools.product("01",repeat=num_state_variables):
-            int_seq = [int(i) for i in seq]
-            tuple_seq = tuple(int_seq)
-            all_states.append(tuple_seq)
-        return all_states
     
     def initialize_q_table(self, num_states, action_space_size):
         for state in range(num_states):
@@ -392,22 +261,10 @@ class SchedulingFunctionQlearning(SchedulingFunctionBase):
             distribution.append(probability_i)
         return distribution
 
-
-    def quantizing_unused_cells_rate(self,unused_cell_rate):
-        if unused_cell_rate > self.UNUSED_CELL_RATE_MAX_THRESHOLD:
-            return True 
-        return False
-
     
     def compute_num_packets_to_be_generated(self,distribution):
         return distribution.index(max(distribution))
     
-    def compute_num_packets_to_remove(self,LAMBDA,cell_option):
-        preferred_parent = self.mote.rpl.getPreferredParent()
-        allocated_cells = [cell for cell in self.mote.tsch.get_cells(preferred_parent, self.SLOTFRAME_HANDLE) 
-                           if cell.options == cell_option]
-        num_cells_to_remove = max(1,len(allocated_cells) - int(math.ceil(self.LAMBDA)))
-        return num_cells_to_remove
 
     def _get_available_slots(self):
         available_slots = self.mote.tsch.get_available_slots(self.SLOTFRAME_HANDLE)
@@ -441,146 +298,6 @@ class SchedulingFunctionQlearning(SchedulingFunctionBase):
         for cell in available_cells:
             unused_cells.append(cell)
         return unused_cells
-    
-    def _compute_charge(self):
-        charge = 0
-        charge =  self.mote.radio.stats['idle_listen'] * d.CHARGE_IdleListen_uC
-        charge += self.mote.radio.stats['tx_data_rx_ack'] * d.CHARGE_TxDataRxAck_uC
-        charge += self.mote.radio.stats['rx_data_tx_ack'] * d.CHARGE_RxDataTxAck_uC
-        charge += self.mote.radio.stats['tx_data'] * d.CHARGE_TxData_uC
-        charge += self.mote.radio.stats['rx_data'] * d.CHARGE_RxData_uC
-        charge += self.mote.radio.stats['sleep'] * d.CHARGE_Sleep_uC
-        current_asn = self.engine.getAsn()
-        asn_synced = self.mote.tsch.asnLastSync
-        #tempo em s que o dispositivo esta sincronizado
-        denominator = (float(current_asn-asn_synced) * self.settings.tsch_slotDuration)
-        if denominator != 0:
-            avg_current_uA = charge/denominator
-        else:
-            avg_current_uA = 0
-        return avg_current_uA
-    
-    def _compute_queue_ratio(self):
-        return len(self.mote.tsch.txQueue)/float(self.settings.tsch_tx_queue_size)
-    
-    #returns how much of the total battery was consumed
-    def _compute_charge_ratio(self):
-        current_charge_consumed = self._compute_charge()
-        if current_charge_consumed >= self.remaining_battery:
-            return 1
-        else:
-            return float(current_charge_consumed/self.remaining_battery)
-        
-    def _compute_traffic(self):
-        current_traffic = self.mote.radio.stats["rx_data_tx_ack"] - self.prev_rx_ack
-        self.prev_rx_ack = self.mote.radio.stats["rx_data_tx_ack"]
-        return current_traffic
-
-    def _compute_average_traffic(self, current_traffic):
-        self.array_rxs_acks.append(current_traffic)
-        if len(self.array_rxs_acks) == self.SLOTFRAME_INTERVAL_SIZE + 1:
-            self.TRAFFIC = sum(
-                self.array_rxs_acks[:self.SLOTFRAME_INTERVAL_SIZE])/float(self.SLOTFRAME_INTERVAL_SIZE)
-            self.array_rxs_acks.pop(0)
-        return self.TRAFFIC
-    
-    def _compute_queue_average_ratio(self, current_queue_ratio):
-        self.array_queue_ratio.append(current_queue_ratio)
-        if len(self.array_queue_ratio) == self.SLOTFRAME_INTERVAL_SIZE + 1:
-            self.AVERAGE_QUEUE_SIZE = sum(
-                self.array_queue_ratio[:self.SLOTFRAME_INTERVAL_SIZE])/float(self.SLOTFRAME_INTERVAL_SIZE)
-            self.array_queue_ratio.pop(0)
-        return self.AVERAGE_QUEUE_SIZE
-
-    def _compute_average_energy_ratio(self, current_energy_ratio):
-        self.array_energy_consumed.append(current_energy_ratio)
-        if len(self.array_energy_consumed) == self.SLOTFRAME_INTERVAL_SIZE + 1:
-            self.AVERAGE_ENERGY_CONSUMED = sum(
-                self.array_energy_consumed[:self.SLOTFRAME_INTERVAL_SIZE])/float(self.SLOTFRAME_INTERVAL_SIZE)
-            self.array_energy_consumed.pop(0)
-        return self.AVERAGE_ENERGY_CONSUMED
-    
-    def normalize(self, number):
-        return 2*number -1  
-    
-    def compute_reward(self, next_state):
-        reward = 0
-        for factor_name, factor_value in next_state.items():
-            if factor_name == 'traffic':
-                reward += self.WT*self.discretize_traffic(1 - factor_value) 
-            elif factor_name == 'queue':
-                reward += self.WQ*self.normalize(1 - factor_value)
-            elif factor_name == 'charge':
-                reward += self.WE*self.normalize(factor_value) 
-        return reward
-    
-    def discretize_queue_ratio(self,queue_ratio):
-        average_queue_ratio = self._compute_queue_average_ratio(queue_ratio)
-        if queue_ratio > average_queue_ratio:
-            return 1
-        return 0
-    
-    def discretize_energy(self,energy_left):
-        average_energy_ratio = self._compute_average_energy_ratio(energy_left)
-        if energy_left > average_energy_ratio:
-            return 1
-        return 0
-
-    def discretize_traffic(self,traffic):
-        average_traffic = self._compute_average_traffic(traffic)
-        if traffic >= average_traffic:
-            return 1
-        return 0
-        
-    def discretize_variables(self, state):
-        discrete_state =  {}
-        for factor_name,factor in state.items():
-            discretize_function = self.return_function_by_name(factor_name, self.name_to_discretize_function)
-            discrete_factor = discretize_function(factor)
-            discrete_state[factor_name] = discrete_factor
-        return discrete_state
-
-    def map_state_to_number(self, state):
-        discrete_state = self.discretize_variables(state)
-        # print(discrete_state)
-        binary_number = ''
-        for key,value in discrete_state.items():
-            binary_number += str(value) 
-        return int(binary_number,2)
-    
-    def return_best_q_value(self,state):
-       current_vector = self.Q_table[state]
-       return np.max(current_vector)
-    
-    def return_best_q_action(self,state):
-        current_vector = self.Q_table[state]
-        return np.argmax(current_vector)
-    
-    def compute_q_table(self, state, next_state, action):
-        curr_state_number = self.map_state_to_number(state)
-        next_state_number = self.map_state_to_number(next_state)
-
-        # Compute reward
-        reward = self.compute_reward(next_state)
-        self.CUMULATIVE_REWARD += reward  # Accumulate reward
-            
-        # print('CUMULATIVE REWARD:', self.CUMULATIVE_REWARD)
-
-        # Compute temporal difference error (TD Error)
-        best_next_q = self.return_best_q_value(next_state_number)  # max Q(s', a')
-        temporal_difference = reward + self.BETA * best_next_q - self.Q_table[curr_state_number][action]
-        self.TD_ERROR = temporal_difference
-        self.SUM_TD_ERROR += self.TD_ERROR
-
-        if self.EPISODE % 100 == 0:
-            self.AVERAGE_CUMULATIVE_REWARD_100 += self.CUMULATIVE_REWARD / float(100)
-            self.AVERAGE_TD_ERROR_100 += self.SUM_TD_ERROR / float(100)
-            self.CUMULATIVE_REWARD = 0
-            self.SUM_TD_ERROR = 0
-        # print('TD ERROR:', self.TD_ERROR)
-
-        # Update Q-value using Q-learning update rule
-        self.Q_table[curr_state_number][action] += self.ALFA * temporal_difference
     
     
     def _is_minimal_cell(self,cell):
@@ -1133,9 +850,12 @@ class SchedulingFunctionQlearning(SchedulingFunctionBase):
             method = None
         ):
 
-        cells_to_delete = self._get_unused_cells(cell_option)
-        if num_cells > len(cells_to_delete):
-            num_cells = 1
+        # prepare cell_list to send
+        cells_to_delete = self._create_occupied_cell_list(
+            neighbor      = preferred_parent,
+            cell_options  = cell_option,
+            cell_list_len = self.DEFAULT_CELL_LIST_LEN
+        )
 
         if len(cells_to_delete) >= 1:
             callback = self._create_delete_request_callback(

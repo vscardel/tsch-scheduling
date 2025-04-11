@@ -80,24 +80,24 @@ def create_config_json():
     # read the default config.json from the simulator source directory
     default_config_path = os.path.join(
         backend.get_simulator_path(),
-        'bin/config.json'
+        'gui/bin/config.json'
     )
     with open(default_config_path) as f:
         default_config = json.load(f)
 
-    # check its settings
-    check_config_json = os.path.join(
-        backend.get_simulator_path(),
-        'bin/check_config_json.py'
-    )
-    popen = subprocess.Popen(
-        [sys.executable, check_config_json, '-s', '-c', '-'],
-        stdin  = subprocess.PIPE,
-        stdout = subprocess.PIPE
-    )
-    _ = popen.communicate(json.dumps(default_config))
-    if popen.returncode != 0:
-        raise ValueError('invalid default config.json')
+    # # check its settings
+    # check_config_json = os.path.join(
+    #     backend.get_simulator_path(),
+    #     'bin/check_config_json.py'
+    # )
+    # popen = subprocess.Popen(
+    #     [sys.executable, check_config_json, '-s', '-c', '-'],
+    #     stdin  = subprocess.PIPE,
+    #     stdout = subprocess.PIPE
+    # )
+    # _ = popen.communicate(json.dumps(default_config))
+    # if popen.returncode != 0:
+    #     raise ValueError('invalid default config.json')
 
     # create a new config.json
     config = dict(CONFIG_JSON_TEMPLATE)

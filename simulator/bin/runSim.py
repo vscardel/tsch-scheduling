@@ -300,11 +300,11 @@ def main():
 
     # merge output files
     folder_path = os.path.join('simData', simconfig.get_log_directory_name())
-    merge_output_files(folder_path)
+    # merge_output_files(folder_path)
 
-    # copy config file into output directory
-    with open(os.path.join(folder_path, 'config.json'), 'w') as f:
-        f.write(simconfig.get_config_data())
+    # # copy config file into output directory
+    # with open(os.path.join(folder_path, 'config.json'), 'w') as f:
+    #     f.write(simconfig.get_config_data())
 
     #=== post-simulation actions
 

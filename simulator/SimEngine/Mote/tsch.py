@@ -21,6 +21,7 @@ from . import MoteDefines as d
 from SimEngine.Mote.scheduling_functions.MSF import SchedulingFunctionMSF
 from SimEngine.Mote.scheduling_functions.Qlearning import SchedulingFunctionQlearning
 from SimEngine.Mote.scheduling_functions.QlearningSBRC24 import SchedulingFunctionQlearningSBRC24
+from SimEngine.Mote.scheduling_functions.EMSF import SchedulingFunctionEMSF
 
 # Simulator-wide modules
 import SimEngine
@@ -458,7 +459,11 @@ class Tsch(object):
                 and
                 packet[u'mac'][u'dstMac'] != d.BROADCAST_ADDRESS
                 and
-                (isinstance(self.mote.sf, SchedulingFunctionMSF) or isinstance(self.mote.sf, SchedulingFunctionQlearning))
+                (isinstance(self.mote.sf, SchedulingFunctionMSF) or 
+                 isinstance(self.mote.sf, SchedulingFunctionQlearning) or
+                 isinstance(self.mote.sf, SchedulingFunctionQlearningSBRC24) or 
+                 isinstance(self.mote.sf, SchedulingFunctionEMSF)
+                 )
                 and
                 not self.mote.sf.get_tx_cells(packet[u'mac'][u'dstMac'])
             ):
