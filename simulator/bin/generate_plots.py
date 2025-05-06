@@ -2,6 +2,8 @@ import json
 import numpy as np
 import os
 import matplotlib.pyplot as plt
+import matplotlib.patches as mpatches
+
 
 from scipy.stats import norm
 
@@ -30,10 +32,22 @@ def generate_box_plots(data_lists, metric_label):
         meanprops=dict(linewidth=1.5, color='red')
     )
 
-    # Pintar as caixas com as cores
-    for patch, color in zip(box['boxes'], colors):
+    hatches = ['//', '\\\\', 'xx', 'oo']
+    labels = ['Q-poisson', 'Q-static', 'MSF', 'EMSF']
+
+
+    for patch, color, hatch in zip(box['boxes'], colors, hatches):
         patch.set_facecolor(color)
-        patch.set_edgecolor('black')
+        patch.set_edgecolor('black')  
+        patch.set_hatch(hatch)       
+
+    handles = [
+        mpatches.Patch(facecolor=c, edgecolor='black', hatch=h, label=l)
+        for h, l, c in zip(hatches, labels, colors)
+    ]
+
+    ax.legend(handles=handles, loc='best', frameon=True)
+
     for whisker in box['whiskers']:
         whisker.set_color('black')
         whisker.set_linewidth(1.2)
@@ -210,7 +224,7 @@ if __name__ == '__main__':
     joins_time_emsf = get_metric_list('join_time', kpis_emsf)
     lifetimes_emsf = get_metric_list('lifetime', kpis_emsf)
     pdrs_emsf = get_metric_list('pdr', kpis_emsf)
-    final_scores_emsf = load_scores(generate_folder_path('traffic_queue_charge'))
+    final_scores_emsf = load_scores(generate_folder_path('EMSF'))
 
     latencies_data = [
         (np.mean(latencies_tfq), compute_confidence_interval(latencies_tfq)),
@@ -249,11 +263,11 @@ if __name__ == '__main__':
         (np.mean(final_scores_emsf), compute_confidence_interval(final_scores_emsf)),
     ]
 
-    generate_bar_plots(latencies_data, 'Latencies')
-    generate_bar_plots(join_time_data, 'Join Times')
-    generate_bar_plots(lifetime_data, 'Lifetimes')
-    generate_bar_plots(pdr_data, 'PDRS')
-    generate_bar_plots(score_data, 'Scores')
+    # generate_bar_plots(latencies_data, 'Latencies')
+    # generate_bar_plots(join_time_data, 'Join Times')
+    # generate_bar_plots(lifetime_data, 'Lifetimes')
+    # generate_bar_plots(pdr_data, 'PDRS')
+    # generate_bar_plots(score_data, 'Scores')
 
     generate_box_plots([latencies_tfq, latencies_qsbrc24, latencies_msf, latencies_emsf], 'Latencies')
     generate_box_plots([joins_time_tfq, joins_time_qsbrc24, joins_time_msf, joins_time_emsf], 'Join Times')
