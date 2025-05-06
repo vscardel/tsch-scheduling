@@ -35,7 +35,7 @@ def compute_percent_contribution():
 
 def compute_dataframe_effects(factors_score):
     for factor_name, score in factors_score.items():
-        if factor_name not in ('baseline', 'qlearningSBRC24'):
+        if factor_name not in ('baseline', 'qlearningSBRC24', 'EMSF'):
             function_name = f'{factor_name}_effect'
             globals()[function_name](factors_score)
             compute_percent_contribution()
@@ -133,7 +133,6 @@ def queue_charge_effect(factors_score):
         - factors_score['traffic_charge']
         + factors_score['queue_charge']
         + factors_score['traffic_queue_charge']) 
-    
     effect = contrast / (4*input_anova['queue_charge']['num_replicas'])
     sum_of_squares = (contrast**2) / (8*input_anova['queue_charge']['num_replicas'])
     input_anova['queue_charge']['effect_estimate'] = effect
@@ -163,7 +162,7 @@ def read_scores():
     factors_scores = {}
     for dir in experiment_dirs:
         #ignore q-learningsbrc24
-        if 'qlearning' in dir:
+        if dir in ('qlearning', 'EMSF', 'qlearningSBRC24'):
             continue
         curr_path = os.path.join('./simData', dir, 'exec_numMotes_50','final_results.json')
         try:
@@ -173,10 +172,10 @@ def read_scores():
                     all_scores.append(score)
                 curr_score = sum(results['score'])
                 factors_scores[dir] = curr_score
-                if dir not in ('baseline'):
+                if dir not in ('baseline', 'EMSF','qlearningSBRC24'):
                     input_anova[dir] = {
                         'num_replicas': len(results['score']),
-                        'total_score': curr_score,
+                        'total_score': curr_score / len(results['score']),
                         'effect_estimate': 0.0,
                         'sum_of_squares': 0.0,
                         'percent_contribution': 0.0

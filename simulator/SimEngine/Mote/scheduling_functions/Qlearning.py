@@ -132,6 +132,9 @@ class SchedulingFunctionQlearning(SchedulingFunctionBase):
             
             next_state = self.compute_next_state(self.settings.factorial_combinations)
 
+            # import ipdb;
+            # ipdb.set_trace()
+
             self.LAMBDA = float(self.num_packets_in_current_episode) / self.MAX_RX_CELLS_PASSED
 
             self.num_packets_in_current_episode = 0
@@ -500,18 +503,18 @@ class SchedulingFunctionQlearning(SchedulingFunctionBase):
             self.array_energy_consumed.pop(0)
         return self.AVERAGE_ENERGY_CONSUMED
     
-    def normalize(self, number):
-        return 2*number -1  
     
     def compute_reward(self, next_state):
+        # import ipdb;
+        # ipdb.set_trace()
         reward = 0
         for factor_name, factor_value in next_state.items():
             if factor_name == 'traffic':
-                reward += self.WT*self.discretize_traffic(1 - factor_value) 
+                reward += self.WT*(1 - self.discretize_traffic(factor_value))
             elif factor_name == 'queue':
-                reward += self.WQ*self.normalize(1 - factor_value)
+                reward += self.WQ*(1 -self.discretize_queue_ratio(factor_value))
             elif factor_name == 'charge':
-                reward += self.WE*self.normalize(factor_value) 
+                reward += self.WE*self.discretize_energy(factor_value) 
         return reward
     
     def discretize_queue_ratio(self,queue_ratio):
@@ -567,6 +570,8 @@ class SchedulingFunctionQlearning(SchedulingFunctionBase):
         # print('CUMULATIVE REWARD:', self.CUMULATIVE_REWARD)
 
         # Compute temporal difference error (TD Error)
+        # import ipdb;
+        # ipdb.set_trace()
         best_next_q = self.return_best_q_value(next_state_number)  # max Q(s', a')
         temporal_difference = reward + self.BETA * best_next_q - self.Q_table[curr_state_number][action]
         self.TD_ERROR = temporal_difference

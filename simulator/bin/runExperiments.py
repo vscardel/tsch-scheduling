@@ -307,7 +307,8 @@ else:
         settings = load_config()
         settings = configure_settings(settings, parameters_list)
         settings['log_directory_name'] = output_folder
-        settings['settings']['regular']['factorial_combinations'] = factor_combination   
+        settings['settings']['regular']['factorial_combinations'] = factor_combination
+        settings['settings']['regular']['STATE_SIZE'] = 2**(len(factor_combination))
         
         #baseline runs MSF
         if not factor_combination:
