@@ -321,6 +321,9 @@ class Tsch(object):
             link_type
         )
         slotframe.add(cell)
+        if isinstance(self.mote.sf, SchedulingFunctionQlearning):        
+            if not self.mote.dagRoot:
+                self.mote.sf.adapt_to_traffic([d.CELLOPTION_TX], cell, op = 'insertion')
 
         # reschedule the next active cell, in case it is now earlier
         if self.getIsSync():
@@ -341,6 +344,9 @@ class Tsch(object):
 
         # delete cell
         slotframe.delete(cell)
+        if isinstance(self.mote.sf, SchedulingFunctionQlearning):
+            if not self.mote.dagRoot:
+                self.mote.sf.adapt_to_traffic([d.CELLOPTION_TX], cell, op = 'insertion')
 
         # reschedule the next active cell, in case it is now earlier
         if self.getIsSync():

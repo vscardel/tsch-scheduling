@@ -314,7 +314,7 @@ class AppRandom(AppBase):
             # it seems we left the dodag; stop the transmission
             self.sending_first_packet = True
             return
-        for i in range(1,random.randint(1,self.MAX_NUM_PACKETS)+1):
+        for i in range(1,random.randint(1,10)+1):
             self._send_packet(
                 dstIp          = self.mote.rpl.dodagId,
                 packet_length  = self.settings.app_pkLength
