@@ -27,7 +27,7 @@ base_command = [
     "-cb", "50",
     "-sf", "Qlearning",
     "-app", "random",
-    "-cc", "FullyMeshed",
+    "-cc", "Random",
     "-sr", "true",
     "--num_slots", "3750",
     "--experiment_type", "minimization"

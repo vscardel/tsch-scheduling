@@ -2,6 +2,8 @@ import json
 import numpy as np
 import os
 import matplotlib.pyplot as plt
+import matplotlib.patches as mpatches
+
 
 from scipy.stats import norm
 
@@ -11,12 +13,15 @@ def generate_box_plots(data_lists, metric_label):
     plt.rcParams['text.usetex'] = True
 
     colors = [
-        (33/255, 133/255, 197/255, 0.7),  # Azul
-        (224/255, 202/255, 60/255, 0.7),  # Amarelo
-        (243/255, 66/255, 19/255, 0.7),   # Laranja avermelhado
-        (38/255, 166/255, 91/255, 0.7)
+        (33/255, 133/255, 197/255, 0.7),   # Azul
+        (151/255, 102/255, 255/255, 0.7),  # Roxo
+        (255/255, 102/255, 178/255, 0.7),  # Rosa (substituto)
+        (224/255, 202/255, 60/255, 0.7),   # Amarelo
+        (243/255, 66/255, 19/255, 0.7),    # Laranja avermelhado
+        (38/255, 166/255, 91/255, 0.7),    # Verde
     ]
-    labels = ['Q-poisson', 'Q-static', 'MSF', 'EMSF']
+    hatches = ['//', '..', 'xx', 'oo', '\\', '.']
+    labels = ['DynQ', 'DynQ-c', 'DynQ-q', 'Q-static', 'MSF', 'EMSF']
 
     fig, ax = plt.subplots()
     box = ax.boxplot(
@@ -30,10 +35,17 @@ def generate_box_plots(data_lists, metric_label):
         meanprops=dict(linewidth=1.5, color='red')
     )
 
-    # Pintar as caixas com as cores
-    for patch, color in zip(box['boxes'], colors):
+    for patch, color, hatch in zip(box['boxes'], colors, hatches):
         patch.set_facecolor(color)
-        patch.set_edgecolor('black')
+        patch.set_edgecolor('black')  
+        patch.set_hatch(hatch)       
+
+    handles = [
+        mpatches.Patch(facecolor=c, edgecolor='black', hatch=h, label=l)
+        for h, l, c in zip(hatches, labels, colors)
+    ]
+    ax.legend(handles=handles, loc='best', frameon=True)
+
     for whisker in box['whiskers']:
         whisker.set_color('black')
         whisker.set_linewidth(1.2)
@@ -112,6 +124,53 @@ def generate_bar_plots(metrics_data, metric_label):
     plt.clf()
 
 
+def generate_contribution_plot(contributions):
+    plt.style.use("presentation.mplstyle")
+    plt.rcParams['text.usetex'] = True
+    
+    # Cores e texturas consistentes com os outros gráficos
+    colors = [
+        (33/255, 133/255, 197/255, 0.7),  # Azul
+        (224/255, 202/255, 60/255, 0.7),  # Amarelo
+        (243/255, 66/255, 19/255, 0.7),   # Laranja
+    ]
+    hatches = ['//', '\\\\', 'xx']  # Padrões de textura
+    
+    factors = ['Traffic', 'Queue', 'Charge']
+    
+    fig, ax = plt.subplots(figsize=(6, 4))
+    
+    # Criar barras com texturas
+    bars = ax.bar(factors, contributions, 
+                 color=colors,
+                 edgecolor='black',
+                 linewidth=1.2)
+    
+    # Aplicar texturas
+    for bar, hatch in zip(bars, hatches):
+        bar.set_hatch(hatch)
+    
+    # Adicionar valores com formatação LaTeX correta (\\%)
+    for bar in bars:
+        height = bar.get_height()
+        ax.text(bar.get_x() + bar.get_width()/2., height,
+                f'{height:.1f}\\%',  # Note a dupla barra invertida
+                ha='center', va='bottom',
+                fontsize=10)
+    
+    # Configurações do gráfico
+    ax.set_ylabel('Contribution (\\%)')  # Dupla barra aqui também
+    ax.set_title('Individual Effects Contributions')
+    ax.grid(True, linestyle='--', alpha=0.6)
+    
+    # Ajustar layout e salvar
+    plt.tight_layout()
+    os.makedirs('./images/barplots', exist_ok=True)
+    plt.savefig('./images/barplots/factor_contributions.pdf', format='pdf', dpi=300)
+    plt.clf()
+
+
+
 def compute_confidence_interval(values, confidence=0.95):
     n = len(values)
     sample_mean = np.mean(values)
@@ -184,9 +243,31 @@ if __name__ == '__main__':
     )
 
     kpis_emsf = load_kpis(
-        generate_folder_path('EMSF'),
+        generate_folder_path('emsf'),
         50
     )
+
+    kpis_charge = load_kpis(
+        generate_folder_path('charge'),
+        50
+    )
+
+    kpis_queue = load_kpis(
+        generate_folder_path('queue'),
+        50
+    )
+
+    latencies_queue = get_metric_list('latency', kpis_queue)
+    joins_time_queue = get_metric_list('join_time', kpis_queue)
+    lifetimes_queue = get_metric_list('lifetime', kpis_queue)
+    pdrs_queue = get_metric_list('pdr', kpis_queue)
+    final_scores_queue = load_scores(generate_folder_path('charge'))
+
+    latencies_charge = get_metric_list('latency', kpis_charge)
+    joins_time_charge = get_metric_list('join_time', kpis_charge)
+    lifetimes_charge = get_metric_list('lifetime', kpis_charge)
+    pdrs_charge = get_metric_list('pdr', kpis_charge)
+    final_scores_charge = load_scores(generate_folder_path('charge'))
 
     latencies_tfq = get_metric_list('latency', kpis_traffic_queue_charge)
     joins_time_tfq = get_metric_list('join_time', kpis_traffic_queue_charge)
@@ -210,55 +291,65 @@ if __name__ == '__main__':
     joins_time_emsf = get_metric_list('join_time', kpis_emsf)
     lifetimes_emsf = get_metric_list('lifetime', kpis_emsf)
     pdrs_emsf = get_metric_list('pdr', kpis_emsf)
-    final_scores_emsf = load_scores(generate_folder_path('traffic_queue_charge'))
+    final_scores_emsf = load_scores(generate_folder_path('emsf'))
 
-    latencies_data = [
-        (np.mean(latencies_tfq), compute_confidence_interval(latencies_tfq)),
-        (np.mean(latencies_qsbrc24), compute_confidence_interval(latencies_qsbrc24)),
-        (np.mean(latencies_msf), compute_confidence_interval(latencies_msf)),
-         (np.mean(latencies_emsf), compute_confidence_interval(latencies_emsf)),
-    ]
-
-
-    join_time_data = [
-        (np.mean(joins_time_tfq), compute_confidence_interval(joins_time_tfq)),
-        (np.mean(joins_time_qsbrc24), compute_confidence_interval(joins_time_qsbrc24)),
-        (np.mean(joins_time_msf), compute_confidence_interval(joins_time_msf)),
-         (np.mean(joins_time_emsf), compute_confidence_interval(joins_time_emsf)),
-    ]
-
-    lifetime_data = [
-        (np.mean(lifetimes_tfq), compute_confidence_interval(lifetimes_tfq)),
-        (np.mean(lifetimes_qsbrc24), compute_confidence_interval(lifetimes_qsbrc24)),
-        (np.mean(lifetimes_msf), compute_confidence_interval(lifetimes_msf)),
-        (np.mean(lifetimes_emsf), compute_confidence_interval(lifetimes_emsf)),
-    ]
-
-    pdr_data = [
-        (np.mean(pdrs_tfq), compute_confidence_interval(pdrs_tfq)),
-        (np.mean(pdrs_qsbrc24), compute_confidence_interval(pdrs_qsbrc24)),
-        (np.mean(pdrs_msf), compute_confidence_interval(pdrs_msf)),
-        (np.mean(pdrs_emsf), compute_confidence_interval(pdrs_emsf)),
-
-    ]
-
-    score_data = [
-        (np.mean(final_scores_tfq), compute_confidence_interval(final_scores_tfq)),
-        (np.mean(final_scores_qsbrc24), compute_confidence_interval(final_scores_qsbrc24)),
-        (np.mean(final_scores_msf), compute_confidence_interval(final_scores_msf)),
-        (np.mean(final_scores_emsf), compute_confidence_interval(final_scores_emsf)),
-    ]
-
-    generate_bar_plots(latencies_data, 'Latencies')
-    generate_bar_plots(join_time_data, 'Join Times')
-    generate_bar_plots(lifetime_data, 'Lifetimes')
-    generate_bar_plots(pdr_data, 'PDRS')
-    generate_bar_plots(score_data, 'Scores')
-
-    generate_box_plots([latencies_tfq, latencies_qsbrc24, latencies_msf, latencies_emsf], 'Latencies')
-    generate_box_plots([joins_time_tfq, joins_time_qsbrc24, joins_time_msf, joins_time_emsf], 'Join Times')
-    generate_box_plots([lifetimes_tfq, lifetimes_qsbrc24, lifetimes_msf, lifetimes_emsf], 'Lifetimes')
-    generate_box_plots([pdrs_tfq, pdrs_qsbrc24, pdrs_msf, pdrs_emsf], 'PDRS')
-    generate_box_plots([final_scores_tfq, final_scores_qsbrc24, final_scores_msf, final_scores_emsf], 'Scores')
+    # latencies_data = [
+    #     (np.mean(latencies_tfq), compute_confidence_interval(latencies_tfq)),
+    #     (np.mean(latencies_qsbrc24), compute_confidence_interval(latencies_qsbrc24)),
+    #     (np.mean(latencies_msf), compute_confidence_interval(latencies_msf)),
+    #      (np.mean(latencies_emsf), compute_confidence_interval(latencies_emsf)),
+    # ]
 
 
+    # join_time_data = [
+    #     (np.mean(joins_time_tfq), compute_confidence_interval(joins_time_tfq)),
+    #     (np.mean(joins_time_qsbrc24), compute_confidence_interval(joins_time_qsbrc24)),
+    #     (np.mean(joins_time_msf), compute_confidence_interval(joins_time_msf)),
+    #      (np.mean(joins_time_emsf), compute_confidence_interval(joins_time_emsf)),
+    # ]
+
+    # lifetime_data = [
+    #     (np.mean(lifetimes_tfq), compute_confidence_interval(lifetimes_tfq)),
+    #     (np.mean(lifetimes_qsbrc24), compute_confidence_interval(lifetimes_qsbrc24)),
+    #     (np.mean(lifetimes_msf), compute_confidence_interval(lifetimes_msf)),
+    #     (np.mean(lifetimes_emsf), compute_confidence_interval(lifetimes_emsf)),
+    # ]
+
+    # pdr_data = [
+    #     (np.mean(pdrs_tfq), compute_confidence_interval(pdrs_tfq)),
+    #     (np.mean(pdrs_qsbrc24), compute_confidence_interval(pdrs_qsbrc24)),
+    #     (np.mean(pdrs_msf), compute_confidence_interval(pdrs_msf)),
+    #     (np.mean(pdrs_emsf), compute_confidence_interval(pdrs_emsf)),
+
+    # ]
+
+    # score_data = [
+    #     (np.mean(final_scores_tfq), compute_confidence_interval(final_scores_tfq)),
+    #     (np.mean(final_scores_qsbrc24), compute_confidence_interval(final_scores_qsbrc24)),
+    #     (np.mean(final_scores_msf), compute_confidence_interval(final_scores_msf)),
+    #     (np.mean(final_scores_emsf), compute_confidence_interval(final_scores_emsf)),
+    # ]
+
+    # generate_bar_plots(latencies_data, 'Latencies')
+    # generate_bar_plots(join_time_data, 'Join Times')
+    # generate_bar_plots(lifetime_data, 'Lifetimes')
+    # generate_bar_plots(pdr_data, 'PDRS')
+    # generate_bar_plots(score_data, 'Scores')
+
+    generate_box_plots([
+        latencies_tfq, latencies_charge, latencies_queue, latencies_qsbrc24, latencies_msf, latencies_emsf
+    ], 'Latencies')
+    generate_box_plots([
+        joins_time_tfq, joins_time_charge, joins_time_queue, joins_time_qsbrc24, joins_time_msf, joins_time_emsf
+    ], 'Join Times')
+    generate_box_plots([
+        lifetimes_tfq, lifetimes_charge, lifetimes_queue,lifetimes_qsbrc24, lifetimes_msf, lifetimes_emsf
+    ], 'Lifetimes')
+    generate_box_plots([
+        pdrs_tfq, pdrs_charge, pdrs_queue , pdrs_qsbrc24, pdrs_msf, pdrs_emsf
+    ], 'PDRS')
+    generate_box_plots([
+        final_scores_tfq, final_scores_charge, final_scores_queue , final_scores_qsbrc24, final_scores_msf, final_scores_emsf
+    ], 'Scores')
+
+    generate_contribution_plot(contributions = [7.12, 30.5, 53.1])

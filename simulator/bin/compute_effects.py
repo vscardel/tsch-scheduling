@@ -4,14 +4,8 @@ from pprint import pprint
 import pandas as pd
 import scipy.stats as stats
 
-
-
-#traffic, queue, charge
-# a, b, c
-
 input_anova = {}
 all_scores = []
-
 
 def compute_sst(all_scores):
     mean_score = sum(all_scores)/len(all_scores)
@@ -19,9 +13,7 @@ def compute_sst(all_scores):
     for score in all_scores:
         sst_total += (score - mean_score)**2
     return sst_total
-    
 
-# how much each combination contribute to the result
 def compute_percent_contribution():
     ss_of_squares = 0.0
     for combination,value in input_anova.items():
@@ -35,7 +27,7 @@ def compute_percent_contribution():
 
 def compute_dataframe_effects(factors_score):
     for factor_name, score in factors_score.items():
-        if factor_name not in ('baseline', 'qlearningSBRC24'):
+        if factor_name not in ('baseline', 'qlearningSBRC24', 'emsf'):
             function_name = f'{factor_name}_effect'
             globals()[function_name](factors_score)
             compute_percent_contribution()
@@ -44,30 +36,21 @@ def compute_dataframe_effects(factors_score):
     return df
 
 def traffic_effect(factors_score):
-    contrast = \
-        (factors_score['traffic']
-        - factors_score['baseline']
-        + factors_score['traffic_queue']
-        - factors_score['queue']
-        + factors_score['queue_charge']
-        - factors_score['charge']
-        + factors_score['traffic_queue_charge']
-        - factors_score['queue_charge'] )
+    contrast =(-factors_score['baseline'] + factors_score['traffic'] 
+                    - factors_score['queue'] + factors_score['traffic_queue'] 
+                    - factors_score['charge'] + factors_score['traffic_charge'] 
+                    - factors_score['queue_charge'] + factors_score['traffic_queue_charge'])
+    
     effect = contrast / (4*input_anova['traffic']['num_replicas'])
     sum_of_squares = (contrast**2) / (8*input_anova['traffic']['num_replicas'])
     input_anova['traffic']['effect_estimate'] = effect
     input_anova['traffic']['sum_of_squares'] = sum_of_squares
 
 def queue_effect(factors_score):
-    contrast = \
-        (factors_score['queue']
-        + factors_score['traffic_queue']
-        + factors_score['queue_charge']
-        + factors_score['traffic_queue_charge']
-        - factors_score['baseline']
-        - factors_score['traffic']
-        - factors_score['charge']
-        - factors_score['traffic_charge']) 
+    contrast =(-factors_score['baseline'] - factors_score['traffic'] 
+                    + factors_score['queue'] + factors_score['traffic_queue'] 
+                    - factors_score['charge'] - factors_score['traffic_charge'] 
+                    + factors_score['queue_charge'] + factors_score['traffic_queue_charge'])
     
     effect = contrast / (4*input_anova['queue']['num_replicas'])
     sum_of_squares = (contrast**2) / (8*input_anova['queue']['num_replicas'])
@@ -75,32 +58,21 @@ def queue_effect(factors_score):
     input_anova['queue']['sum_of_squares'] = sum_of_squares
 
 def charge_effect(factors_score):
-    contrast = \
-        (factors_score['charge']
-        + factors_score['traffic_charge']
-        + factors_score['queue_charge']
-        + factors_score['traffic_queue_charge']
-        - factors_score['baseline']
-        - factors_score['traffic']
-        - factors_score['queue']
-        - factors_score['traffic_queue']) 
+    contrast =(-factors_score['baseline'] - factors_score['traffic'] 
+                    - factors_score['queue'] - factors_score['traffic_queue'] 
+                    + factors_score['charge'] + factors_score['traffic_charge'] 
+                    + factors_score['queue_charge'] + factors_score['traffic_queue_charge'])
     
     effect = contrast / (4*input_anova['charge']['num_replicas'])
     sum_of_squares = (contrast**2) / (8*input_anova['charge']['num_replicas'])
     input_anova['charge']['effect_estimate'] = effect
     input_anova['charge']['sum_of_squares'] = sum_of_squares
-    
 
 def traffic_queue_effect(factors_score):
-    contrast = \
-        (factors_score['traffic_queue']
-        - factors_score['traffic']
-        - factors_score['queue']
-        + factors_score['baseline']
-        + factors_score['traffic_queue_charge']
-        - factors_score['queue_charge']
-        - factors_score['traffic_charge']
-        + factors_score['charge']) 
+    contrast =(+factors_score['baseline'] - factors_score['traffic'] 
+                    - factors_score['queue'] + factors_score['traffic_queue'] 
+                    + factors_score['charge'] - factors_score['traffic_charge'] 
+                    - factors_score['queue_charge'] + factors_score['traffic_queue_charge'])
     
     effect = contrast / (4*input_anova['traffic_queue']['num_replicas'])
     sum_of_squares = (contrast**2) / (8*input_anova['traffic_queue']['num_replicas'])
@@ -108,53 +80,37 @@ def traffic_queue_effect(factors_score):
     input_anova['traffic_queue']['sum_of_squares'] = sum_of_squares
 
 def traffic_charge_effect(factors_score):
-    contrast = \
-        (factors_score['baseline']
-        - factors_score['traffic']
-        + factors_score['queue']
-        - factors_score['traffic_queue']
-        - factors_score['charge']
-        + factors_score['traffic_charge']
-        - factors_score['queue_charge']
-        + factors_score['traffic_queue_charge']) 
+    contrast =(+factors_score['baseline'] - factors_score['traffic'] 
+                    + factors_score['queue'] - factors_score['traffic_queue'] 
+                    - factors_score['charge'] + factors_score['traffic_charge'] 
+                    - factors_score['queue_charge'] + factors_score['traffic_queue_charge'])
     
     effect = contrast / (4*input_anova['traffic_charge']['num_replicas'])
     sum_of_squares = (contrast**2) / (8*input_anova['traffic_charge']['num_replicas'])
     input_anova['traffic_charge']['effect_estimate'] = effect
-    input_anova['traffic_charge']['sum_of_squares'] = sum_of_squares  
+    input_anova['traffic_charge']['sum_of_squares'] = sum_of_squares
 
 def queue_charge_effect(factors_score):
-    contrast = \
-        (factors_score['baseline']
-        + factors_score['traffic']
-        - factors_score['queue']
-        - factors_score['traffic_queue']
-        - factors_score['charge']
-        - factors_score['traffic_charge']
-        + factors_score['queue_charge']
-        + factors_score['traffic_queue_charge']) 
+    contrast =(+factors_score['baseline'] + factors_score['traffic'] 
+                    - factors_score['queue'] - factors_score['traffic_queue'] 
+                    - factors_score['charge'] - factors_score['traffic_charge'] 
+                    + factors_score['queue_charge'] + factors_score['traffic_queue_charge'])
     
     effect = contrast / (4*input_anova['queue_charge']['num_replicas'])
     sum_of_squares = (contrast**2) / (8*input_anova['queue_charge']['num_replicas'])
     input_anova['queue_charge']['effect_estimate'] = effect
-    input_anova['queue_charge']['sum_of_squares'] = sum_of_squares  
-    
+    input_anova['queue_charge']['sum_of_squares'] = sum_of_squares
 
 def traffic_queue_charge_effect(factors_score):
-    contrast = \
-        (factors_score['traffic_queue_charge']
-        - factors_score['queue_charge']
-        - factors_score['traffic_charge']
-        + factors_score['charge']
-        - factors_score['traffic_queue']
-        + factors_score['queue']
-        + factors_score['traffic']
-        - factors_score['baseline']) 
+    contrast =(-factors_score['baseline'] + factors_score['traffic'] 
+                    + factors_score['queue'] - factors_score['traffic_queue'] 
+                    + factors_score['charge'] - factors_score['traffic_charge'] 
+                    - factors_score['queue_charge'] + factors_score['traffic_queue_charge'])
     
     effect = contrast / (4*input_anova['traffic_queue_charge']['num_replicas'])
     sum_of_squares = (contrast**2) / (8*input_anova['traffic_queue_charge']['num_replicas'])
     input_anova['traffic_queue_charge']['effect_estimate'] = effect
-    input_anova['traffic_queue_charge']['sum_of_squares'] = sum_of_squares  
+    input_anova['traffic_queue_charge']['sum_of_squares'] = sum_of_squares
     
 
 def read_scores():
@@ -163,7 +119,7 @@ def read_scores():
     factors_scores = {}
     for dir in experiment_dirs:
         #ignore q-learningsbrc24
-        if 'qlearning' in dir:
+        if dir in ('qlearning', 'emsf', 'qlearningSBRC24'):
             continue
         curr_path = os.path.join('./simData', dir, 'exec_numMotes_50','final_results.json')
         try:
@@ -173,10 +129,10 @@ def read_scores():
                     all_scores.append(score)
                 curr_score = sum(results['score'])
                 factors_scores[dir] = curr_score
-                if dir not in ('baseline'):
+                if dir not in ('baseline', 'emsf','qlearningSBRC24'):
                     input_anova[dir] = {
                         'num_replicas': len(results['score']),
-                        'total_score': curr_score,
+                        'total_score': curr_score / len(results['score']),
                         'effect_estimate': 0.0,
                         'sum_of_squares': 0.0,
                         'percent_contribution': 0.0

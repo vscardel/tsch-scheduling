@@ -135,6 +135,20 @@ def load_kpis(folder_path, num_motes):
             print("Something went wrong reading KPIs on try {0}".format(tentativa))
     return kpis
 
+def compute_average_lifetime(kpis):
+    average_lifetime = []
+    for run in kpis:
+        run_lifetime = []
+        for mote in kpis[run]:
+            if mote != 'global-stats':
+                lifetime = kpis[run][mote]['lifetime_AA_years']
+                if isinstance(lifetime, str) or (not lifetime):
+                    lifetime = 0
+                run_lifetime.append(lifetime)
+        average_lifetime.append(sum(run_lifetime)/len(run_lifetime))
+    return sum(average_lifetime)/len(average_lifetime)
+        
+
 def compute_score(kpis):
     scores = []
     for run in kpis:
@@ -143,7 +157,7 @@ def compute_score(kpis):
         #convert join_time to seconds
         join_time = kpis[run]['global-stats']["joining-time"][0]['mean'] / 100
         #years
-        network_lifetime = kpis[run]['global-stats']['network_lifetime'][0]['min']
+        network_lifetime = compute_average_lifetime(kpis)
         packet_delivery_ratio = kpis[run]['global-stats']['e2e-upstream-delivery'][0]['value']
         try:
             metrics_vector = [
@@ -162,7 +176,7 @@ def compute_score(kpis):
                 elif metric_name =='pdr':
                     score += kpis_weights[metric_name] * smooth_threshold_below(metric_value, kpis_tresholds[metric_name], k = 0.2)
                 elif metric_name == 'lifetime':
-                    score += kpis_weights[metric_name] * smooth_threshold_below(metric_value, kpis_tresholds[metric_name], k = 1)
+                    score += kpis_weights[metric_name] * smooth_threshold_below(metric_value, kpis_tresholds[metric_name], k = 1.5)
             scores.append(score)
         except Exception as e:
             print(e)
@@ -235,7 +249,7 @@ if args.experiment_type == 'minimization':
                     [(0.1, 0.9),  # ALFA
                     (0.1, 0.9),  # BETA
                     #    (5,10),     # SLOTFRAME_INTERVAL_SIZE
-                    (0.001, 0.005), # EPSLON_DECAY_RATE
+                    (0.01, 0.09), # EPSLON_DECAY_RATE
                     (0.05, 0.1),  # MIN_EPSLON
                     #    (50, 100),   # MAX_TX_CELLS_PASSED
                     #    (50, 100),   # MAX_RX_CELLS_PASSED
@@ -307,7 +321,8 @@ else:
         settings = load_config()
         settings = configure_settings(settings, parameters_list)
         settings['log_directory_name'] = output_folder
-        settings['settings']['regular']['factorial_combinations'] = factor_combination   
+        settings['settings']['regular']['factorial_combinations'] = factor_combination
+        settings['settings']['regular']['STATE_SIZE'] = 2**(len(factor_combination))
         
         #baseline runs MSF
         if not factor_combination:

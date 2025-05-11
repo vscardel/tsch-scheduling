@@ -40,7 +40,7 @@ class DiscreteEventEngine(threading.Thread):
     #===== start singleton
     _instance      = None
     _init          = False
-    SLOTFRAME_PERIOD_SIZE = 10
+    SLOTFRAME_PERIOD_SIZE = 1
 
     simconfig = SimConfig.SimConfig(configfile='config.json')
 
