@@ -152,14 +152,15 @@ def compute_average_lifetime(kpis):
 def compute_score(kpis):
     scores = []
     for run in kpis:
-        #seconds
-        latency = kpis[run]['global-stats']['e2e-upstream-latency'][0]['mean']
-        #convert join_time to seconds
-        join_time = kpis[run]['global-stats']["joining-time"][0]['mean'] / 100
-        #years
-        network_lifetime = compute_average_lifetime(kpis)
-        packet_delivery_ratio = kpis[run]['global-stats']['e2e-upstream-delivery'][0]['value']
         try:
+            #seconds
+            latency = kpis[run]['global-stats']['e2e-upstream-latency'][0]['mean']
+            #convert join_time to seconds
+            join_time = kpis[run]['global-stats']["joining-time"][0]['mean'] / 100
+            #years
+            network_lifetime = compute_average_lifetime(kpis)
+            packet_delivery_ratio = kpis[run]['global-stats']['e2e-upstream-delivery'][0]['value']
+
             metrics_vector = [
                 (latency, 'latency'), 
                 (join_time, 'join_time'), 
@@ -181,6 +182,7 @@ def compute_score(kpis):
         except Exception as e:
             print(e)
             print('Failed to calculate score. Returning MAX VALUE.')
+            scores.append(1)
             return None
     return scores
 
@@ -254,10 +256,10 @@ if args.experiment_type == 'minimization':
                     #    (50, 100),   # MAX_TX_CELLS_PASSED
                     #    (50, 100),   # MAX_RX_CELLS_PASSED
                     (0.5, 0.7)],   # EPSLON_THRESHOLD   
-                    n_calls=25
+                    n_calls=10
                 )
 
-    time.sleep(10)
+    time.sleep(30)
 
     print('Optimal set of parameters\n')
     parameters_to_save = {}
@@ -305,7 +307,7 @@ else:
 
     all_combinations.sort(key=len)
     all_combinations.reverse()
-    all_combinations.insert(0,['qlearningSBRC24'])
+    # all_combinations.insert(0,['qlearningSBRC24'])
     # run each combination
     for factor_combination in all_combinations:
 
