@@ -142,7 +142,7 @@ def compute_average_lifetime(kpis):
         for mote in kpis[run]:
             if mote != 'global-stats':
                 lifetime = kpis[run][mote]['lifetime_AA_years']
-                if isinstance(lifetime, str) or (not lifetime):
+                if isinstance(lifetime, unicode) or (not lifetime):
                     lifetime = 0
                 run_lifetime.append(lifetime)
         average_lifetime.append(sum(run_lifetime)/len(run_lifetime))
@@ -152,6 +152,8 @@ def compute_average_lifetime(kpis):
 def compute_score(kpis):
     scores = []
     for run in kpis:
+        import ipdb;
+        ipdb.set_trace()
         try:
             #seconds
             latency = kpis[run]['global-stats']['e2e-upstream-latency'][0]['mean']
@@ -220,142 +222,144 @@ def efficience_function(parameters):
         return MAX_FUNCTION_VALUE
     return MAX_FUNCTION_VALUE
 
-parser = argparse.ArgumentParser()
+if __name__ == '__main__':
 
-parser.add_argument('-nc','--num_cpus', type=int, help='Number of cpu cores', required=True)
-parser.add_argument('-nr','--num_runs', type=int, help='Number of times each combination of motes will be run', required=True)
-parser.add_argument('-cb','--combinations',type=int, nargs='+', help='Combination of number of Motes', required=True)
-parser.add_argument('-sf','--sched_function', help='Scheduling function alias', required=True)
-parser.add_argument('-app','--application', help='Application Type', required=True)
-parser.add_argument('-of','--output_folder', help='Output folder name', required=True)
-parser.add_argument('-ne','--num_evaluations', type=int, help='Number of evaluations of efficiency function', required=False)
-parser.add_argument('-af','--aquisition_function', type=str, help='The aquisition function used in gp_minimize', required=False)
-parser.add_argument('-sr','--sync_required', type=bool, help='if sync info is obtained in simulation', required=False)
-parser.add_argument('-nrs','--num_random_starts', type=int, help='num random starts of gp.minimize', required=False)
-parser.add_argument('-cc','--conn_class', type=str, help='connectivity_matrix', required=True)
-parser.add_argument('-nslots','--num_slots', type=int, help='number of slotframes (time) of simulation', required=True)
-parser.add_argument('-is_min','--experiment_type', type=str, help='determines the time of experiment (minimization or 2^k)', required=True)
+    parser = argparse.ArgumentParser()
 
-parser.add_argument(
-    '-fc', '--factor_combinations',
-    help='List of factor combinations',
-    type=str,
-    required=False
-)
+    parser.add_argument('-nc','--num_cpus', type=int, help='Number of cpu cores', required=True)
+    parser.add_argument('-nr','--num_runs', type=int, help='Number of times each combination of motes will be run', required=True)
+    parser.add_argument('-cb','--combinations',type=int, nargs='+', help='Combination of number of Motes', required=True)
+    parser.add_argument('-sf','--sched_function', help='Scheduling function alias', required=True)
+    parser.add_argument('-app','--application', help='Application Type', required=True)
+    parser.add_argument('-of','--output_folder', help='Output folder name', required=True)
+    parser.add_argument('-ne','--num_evaluations', type=int, help='Number of evaluations of efficiency function', required=False)
+    parser.add_argument('-af','--aquisition_function', type=str, help='The aquisition function used in gp_minimize', required=False)
+    parser.add_argument('-sr','--sync_required', type=bool, help='if sync info is obtained in simulation', required=False)
+    parser.add_argument('-nrs','--num_random_starts', type=int, help='num random starts of gp.minimize', required=False)
+    parser.add_argument('-cc','--conn_class', type=str, help='connectivity_matrix', required=True)
+    parser.add_argument('-nslots','--num_slots', type=int, help='number of slotframes (time) of simulation', required=True)
+    parser.add_argument('-is_min','--experiment_type', type=str, help='determines the time of experiment (minimization or 2^k)', required=True)
+
+    parser.add_argument(
+        '-fc', '--factor_combinations',
+        help='List of factor combinations',
+        type=str,
+        required=False
+    )
 
 
-args = parser.parse_args()
+    args = parser.parse_args()
 
-if args.experiment_type == 'minimization':
-    res = gp_minimize(efficience_function,  # The function to minimize
-                    [(0.1, 0.9),  # ALFA
-                    (0.1, 0.9),  # BETA
-                    #    (5,10),     # SLOTFRAME_INTERVAL_SIZE
-                    (0.01, 0.09), # EPSLON_DECAY_RATE
-                    (0.05, 0.1),  # MIN_EPSLON
-                    #    (50, 100),   # MAX_TX_CELLS_PASSED
-                    #    (50, 100),   # MAX_RX_CELLS_PASSED
-                    (0.5, 0.7)],   # EPSLON_THRESHOLD   
-                    n_calls=10
-                )
+    if args.experiment_type == 'minimization':
+        res = gp_minimize(efficience_function,  # The function to minimize
+                        [(0.1, 0.9),  # ALFA
+                        (0.1, 0.9),  # BETA
+                        #    (5,10),     # SLOTFRAME_INTERVAL_SIZE
+                        (0.01, 0.09), # EPSLON_DECAY_RATE
+                        (0.05, 0.1),  # MIN_EPSLON
+                        #    (50, 100),   # MAX_TX_CELLS_PASSED
+                        #    (50, 100),   # MAX_RX_CELLS_PASSED
+                        (0.5, 0.7)],   # EPSLON_THRESHOLD   
+                        n_calls=10
+                    )
 
-    time.sleep(30)
+        time.sleep(30)
 
-    print('Optimal set of parameters\n')
-    parameters_to_save = {}
-    for i,paramater in enumerate(parameters_position):
-        current_value = res.x[i]
-        print('{0}: {1}\n'.format(paramater, current_value))
-        parameters_to_save[paramater] = current_value
+        print('Optimal set of parameters\n')
+        parameters_to_save = {}
+        for i,paramater in enumerate(parameters_position):
+            current_value = res.x[i]
+            print('{0}: {1}\n'.format(paramater, current_value))
+            parameters_to_save[paramater] = current_value
 
-    with open('./{0}_parameters.json'.format(args.output_folder), 'w') as f:
-        json.dump(parameters_to_save, f)
+        with open('./{0}_parameters.json'.format(args.output_folder), 'w') as f:
+            json.dump(parameters_to_save, f)
 
-    print('Best value: {0}'.format(min(res.func_vals)))
+        print('Best value: {0}'.format(min(res.func_vals)))
 
-    ys = ALL_SCORES
-    xs = [i+1 for i in range(len(ALL_SCORES))]  # Evaluation numbers (x-axis)
+        ys = ALL_SCORES
+        xs = [i+1 for i in range(len(ALL_SCORES))]  # Evaluation numbers (x-axis)
 
-    my_plot = plt.plot(xs, ys ,color='red', linewidth=2)
-    plt.scatter(xs, ys, color='red', s=50, edgecolors='black', zorder=3)
-    plt.title("Optimization Convergence")
-    plt.xlabel("Number of Evaluations")
-    plt.ylabel("Minimum Objective Function Value")
-    plt.xticks(range(1, len(ALL_SCORES)+1, 1))  
-    random_num = random.randint(1, 50)
-    plt.savefig("all_values_convergence{0}.png".format(random_num))
+        my_plot = plt.plot(xs, ys ,color='red', linewidth=2)
+        plt.scatter(xs, ys, color='red', s=50, edgecolors='black', zorder=3)
+        plt.title("Optimization Convergence")
+        plt.xlabel("Number of Evaluations")
+        plt.ylabel("Minimum Objective Function Value")
+        plt.xticks(range(1, len(ALL_SCORES)+1, 1))  
+        random_num = random.randint(1, 50)
+        plt.savefig("all_values_convergence{0}.png".format(random_num))
 
-    ax = plot_convergence(res)
-    ax.set_title("Optimization Convergence")
-    ax.set_xlabel("Number of Evaluations")
-    ax.set_ylabel("Minimum Objective Function Value")
-    plt.savefig("convergence_plot{0}.png".format(random_num))
+        ax = plot_convergence(res)
+        ax.set_title("Optimization Convergence")
+        ax.set_xlabel("Number of Evaluations")
+        ax.set_ylabel("Minimum Objective Function Value")
+        plt.savefig("convergence_plot{0}.png".format(random_num))
 
-else:
-    print('lets do the 2^k factorial experiment')   
+    else:
+        print('lets do the 2^k factorial experiment')   
 
-    # build all possibilities of factors
-    factors = ['traffic', 'queue', 'charge']
-    all_combinations = []
-    combinations = list(itertools.product([0, 1], repeat=3))
-    for combination in combinations:
-        current_combination = []
-        for i,index in enumerate(combination):
-            if index:
-                current_combination.append(factors[i])
-        all_combinations.append(current_combination)
+        # build all possibilities of factors
+        factors = ['traffic', 'queue', 'charge']
+        all_combinations = []
+        combinations = list(itertools.product([0, 1], repeat=3))
+        for combination in combinations:
+            current_combination = []
+            for i,index in enumerate(combination):
+                if index:
+                    current_combination.append(factors[i])
+            all_combinations.append(current_combination)
 
-    all_combinations.sort(key=len)
-    all_combinations.reverse()
-    # all_combinations.insert(0,['qlearningSBRC24'])
-    # run each combination
-    for factor_combination in all_combinations:
+        all_combinations.sort(key=len)
+        all_combinations.reverse()
+        # all_combinations.insert(0,['qlearningSBRC24'])
+        # run each combination
+        for factor_combination in all_combinations:
 
-        # empty combination
-        if not factor_combination:
-            output_folder = 'baseline'
-            parameters_list = []
-        else:
-            output_folder = '_'.join(factor_combination)
-            parameters_list = load_optimal_parameters('_'.join(factor_combination))
+            # empty combination
+            if not factor_combination:
+                output_folder = 'baseline'
+                parameters_list = []
+            else:
+                output_folder = '_'.join(factor_combination)
+                parameters_list = load_optimal_parameters('_'.join(factor_combination))
 
-        config_name = 'config_{0}.json'.format(output_folder)
-        settings = load_config()
-        settings = configure_settings(settings, parameters_list)
-        settings['log_directory_name'] = output_folder
-        settings['settings']['regular']['factorial_combinations'] = factor_combination
-        settings['settings']['regular']['STATE_SIZE'] = 2**(len(factor_combination))
-        
-        #baseline runs MSF
-        if not factor_combination:
-            settings['settings']['regular']['sf_class'] = 'MSF'
-        elif factor_combination == ['qlearningSBRC24']:
-            settings['settings']['regular']['sf_class'] = 'QlearningSBRC24'
+            config_name = 'config_{0}.json'.format(output_folder)
+            settings = load_config()
+            settings = configure_settings(settings, parameters_list)
+            settings['log_directory_name'] = output_folder
+            settings['settings']['regular']['factorial_combinations'] = factor_combination
+            settings['settings']['regular']['STATE_SIZE'] = 2**(len(factor_combination))
+            
+            #baseline runs MSF
+            if not factor_combination:
+                settings['settings']['regular']['sf_class'] = 'MSF'
+            elif factor_combination == ['qlearningSBRC24']:
+                settings['settings']['regular']['sf_class'] = 'QlearningSBRC24'
 
-        save_curr_run_config(config_name, settings)
-        settings = convert_types(settings)   
+            save_curr_run_config(config_name, settings)
+            settings = convert_types(settings)   
 
-        os.system('python2 runSim.py --config {0}'.format(config_name))
+            os.system('python2 runSim.py --config {0}'.format(config_name))
 
-        curr_output_folder_path = os.path.join(
-            'simData',
-            output_folder,
-            'exec_numMotes_{0}'.format(args.combinations[0])
-        )
+            curr_output_folder_path = os.path.join(
+                'simData',
+                output_folder,
+                'exec_numMotes_{0}'.format(args.combinations[0])
+            )
 
-        os.system('python2 compute_kpis.py --subfolder {0}'.format(curr_output_folder_path))
-        os.system('python2 plot.py --inputfolder {0}'.format(curr_output_folder_path))
+            os.system('python2 compute_kpis.py --subfolder {0}'.format(curr_output_folder_path))
+            os.system('python2 plot.py --inputfolder {0}'.format(curr_output_folder_path))
 
-        import time 
-        time.sleep(10)
+            import time 
+            time.sleep(10)
 
-        kpis = load_kpis(curr_output_folder_path, args.combinations[0])
-        scores = compute_score(kpis)
-        final_results = {
-            'score': scores, 
-            # to be computed
-            'comulative reward': None
-        }
-        with open(os.path.join(curr_output_folder_path, 'final_results.json'), 'w') as f:
-            json.dump(final_results, f, indent=4)
-        time.sleep(2)
+            kpis = load_kpis(curr_output_folder_path, args.combinations[0])
+            scores = compute_score(kpis)
+            final_results = {
+                'score': scores, 
+                # to be computed
+                'comulative reward': None
+            }
+            with open(os.path.join(curr_output_folder_path, 'final_results.json'), 'w') as f:
+                json.dump(final_results, f, indent=4)
+            time.sleep(2)
