@@ -409,6 +409,6 @@ if __name__ == '__main__':
         final_scores_tfq, final_scores_charge, final_scores_queue , final_scores_qsbrc24, final_scores_msf, final_scores_emsf
     ], 'Scores')
 
-    generate_contribution_plot(contributions = [4, 24.7, 6])
+    generate_contribution_plot(contributions = [14.9, 64.6, 7])
 
     generate_reward_epsilon_plots(generate_folder_path('traffic_queue_charge'))

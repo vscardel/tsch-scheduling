@@ -536,9 +536,9 @@ class SchedulingFunctionQlearning(SchedulingFunctionBase):
         # ---------------------------
         # Weights (tune as needed)
         # ---------------------------
-        w_throughput  = 0.5
-        w_utilization = 0.5
-        w_latency     = 0.1
+        w_throughput  = 0.8
+        w_utilization = 0.2
+        w_latency     = 0.8
         w_energy      = 0.01
 
         # ---------------------------

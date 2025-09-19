@@ -152,8 +152,6 @@ def compute_average_lifetime(kpis):
 def compute_score(kpis):
     scores = []
     for run in kpis:
-        import ipdb;
-        ipdb.set_trace()
         try:
             #seconds
             latency = kpis[run]['global-stats']['e2e-upstream-latency'][0]['mean']
@@ -311,7 +309,7 @@ if __name__ == '__main__':
 
         all_combinations.sort(key=len)
         all_combinations.reverse()
-        # all_combinations.insert(0,['qlearningSBRC24'])
+        all_combinations.insert(0,['qlearningSBRC24'])
         # run each combination
         for factor_combination in all_combinations:
 
