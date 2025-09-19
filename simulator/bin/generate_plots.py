@@ -7,6 +7,63 @@ import matplotlib.patches as mpatches
 
 from scipy.stats import norm
 
+# returns biggest json with reward data
+def find_biggest_reward_data(folder_path):
+    biggest = -1
+    final_data = None
+    runs = os.listdir(folder_path)
+    for run_number in runs:
+        if 'run_' in run_number:
+            curr_run_path = os.path.join(folder_path, run_number)
+            all_motes_data = os.listdir(curr_run_path)
+            for mote in all_motes_data:
+                curr_mote_path = os.path.join(curr_run_path, mote)
+                with open(f'{curr_mote_path}/qlearning_stats.json', 'r') as f:
+                    data = json.load(f) 
+                    data_size = len(data['CUMULATIVE_REWARD']) + len(data['EPSILON'])
+                    if data_size > biggest:
+                        final_data = data 
+                        biggest = data_size
+    return final_data 
+
+def generate_reward_epsilon_plots(folder_path):
+
+    data = find_biggest_reward_data(folder_path)
+
+    # Convert keys to integers
+    episodes = np.array([int(k) for k in data["CUMULATIVE_REWARD"].keys()])
+    rewards = np.array(list(data["CUMULATIVE_REWARD"].values()))
+    epsilons = np.array(list(data["EPSILON"].values()))
+
+    # Polynomial trend line for rewards
+    z = np.polyfit(episodes, rewards, 3)
+    p = np.poly1d(z)
+    trend_rewards = p(episodes)
+
+    # Plot
+    plt.figure(figsize=(12, 5))
+
+    # Reward plot
+    plt.subplot(1, 2, 1)
+    plt.plot(episodes, rewards, label="Cumulative Reward", color="blue")
+    plt.plot(episodes, trend_rewards, label="Trend", color="red", linestyle="--")
+    plt.xlabel("Episode")
+    plt.ylabel("Cumulative Reward")
+    plt.title("Cumulative Reward over Episodes")
+    plt.legend()
+
+    # Epsilon plot
+    # TODO: plot line at treshold
+    plt.subplot(1, 2, 2)
+    plt.plot(episodes, epsilons[:len(episodes)], label="Epsilon", color="green")
+    plt.xlabel("Episode")
+    plt.ylabel("Epsilon")
+    plt.title("Epsilon Decay over Episodes")
+    plt.legend()
+
+    plt.tight_layout()
+    plt.savefig('./images/reward_graph.pdf')
+
 
 def generate_box_plots(data_lists, metric_label):
     plt.style.use("presentation.mplstyle")
@@ -352,4 +409,6 @@ if __name__ == '__main__':
         final_scores_tfq, final_scores_charge, final_scores_queue , final_scores_qsbrc24, final_scores_msf, final_scores_emsf
     ], 'Scores')
 
-    generate_contribution_plot(contributions = [7.12, 30.5, 53.1])
+    generate_contribution_plot(contributions = [14.9, 64.6, 7])
+
+    generate_reward_epsilon_plots(generate_folder_path('traffic_queue_charge'))

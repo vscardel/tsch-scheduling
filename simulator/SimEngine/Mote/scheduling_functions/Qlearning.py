@@ -64,8 +64,8 @@ class SchedulingFunctionQlearning(SchedulingFunctionBase):
     AVERAGE_TD_ERROR_100 = 0
     AVERAGE_CUMULATIVE_REWARD_100 = 0
     QLEARNING_STATS = {
-        'AVERAGE_TD_ERROR': [],
-        'AVERAGE_CUMULATIVE_REWARD': []
+        'CUMULATIVE_REWARD': {},
+        'EPSILON':{}
     }
 
     #traffic estimate variables
@@ -142,8 +142,6 @@ class SchedulingFunctionQlearning(SchedulingFunctionBase):
         if preferred_parent and self.mote.clear_to_send_EBs_DATA():
 
             current_state = self.compute_next_state(self.settings.factorial_combinations)
-            if self.mote.id == 1:
-                print(current_state)
 
             if hasattr(self, 'last_action'):
                 self.compute_q_table(
@@ -156,6 +154,8 @@ class SchedulingFunctionQlearning(SchedulingFunctionBase):
             # 3. Atualiza episodio e epslon
             self.EPISODE += 1
             self.EPSLON = self.MIN_EPSLON + (self.MAX_EPSLON - self.MIN_EPSLON) * np.exp(-self.EPSLON_DECAY_RATE * self.EPISODE)
+            self.QLEARNING_STATS['EPSILON'][self.EPISODE] = self.EPSLON
+
             # print(self.EPSLON)
             # print('EPSLON')
             # print(self.EPSLON)
@@ -224,18 +224,14 @@ class SchedulingFunctionQlearning(SchedulingFunctionBase):
         function_name = function_names.get(function_name)
         return function_name
 
-    def save_qlearning_stats(self):
-        self.QLEARNING_STATS['AVERAGE_TD_ERROR'].append(self.AVERAGE_TD_ERROR_100)
-        self.QLEARNING_STATS['AVERAGE_CUMULATIVE_REWARD'].append(self.AVERAGE_CUMULATIVE_REWARD_100)
-
     def stop(self):
         self.mote.tsch.delete_slotframe(self.SLOTFRAME_HANDLE)
         self.EPSLON = 0
         self.EPISODE = 0
         self.CUMULATIVE_REWARD = 0
         self.QLEARNING_STATS = {
-            'AVERAGE_TD_ERROR': [],
-            'AVERAGE_CUMULATIVE_REWARD': []
+            'CUMULATIVE_REWARD': {},
+            'EPSILON':{}
         }
         
 
@@ -492,15 +488,7 @@ class SchedulingFunctionQlearning(SchedulingFunctionBase):
     def _compute_queue_ratio(self):
         return len(self.mote.tsch.txQueue)/float(self.settings.tsch_tx_queue_size)
     
-    #returns how much of the total battery was consumed
-    def _compute_charge_consumed_in_episode(self, charge):
-        if not self.prev_charge:
-            return 0 
-        else:
-            return charge - self.prev_charge 
-        
-        self.prev_charge = charge
-        
+                
     def _compute_traffic(self):
         current_traffic = self.mote.radio.stats["rx_data_tx_ack"] - self.prev_rx_ack
         self.prev_rx_ack = current_traffic
@@ -535,56 +523,74 @@ class SchedulingFunctionQlearning(SchedulingFunctionBase):
         return current_energy_consumed
     
     
-    def compute_reward(self, next_state, action, op):
+    def compute_reward(self):
 
-        if op == 'insertion':
-            
-            if self.last_inserted_cells_info:
+        reward = 0.0
 
-                preferred_parent = self.mote.rpl.getPreferredParent()
+        preferred_parent = self.mote.rpl.getPreferredParent()
+        cells_in_slotframe = [
+            (cell.channel_offset, cell.slot_offset, cell.num_tx, cell.num_tx_ack) 
+            for cell in self.mote.tsch.get_cells(preferred_parent, self.SLOTFRAME_HANDLE)
+        ]
 
-                cells_in_slotframe = [
-                    (cell.channel_offset, cell.slot_offset, cell.num_tx, cell.num_tx_ack) 
-                    for cell in self.mote.tsch.get_cells(preferred_parent, self.SLOTFRAME_HANDLE)
-                ]
+        # ---------------------------
+        # Weights (tune as needed)
+        # ---------------------------
+        w_throughput  = 0.8
+        w_utilization = 0.2
+        w_latency     = 0.8
+        w_energy      = 0.01
 
-                last_requested_cells = [
-                    (cell['channelOffset'], cell['slotOffset'])
-                    for cell in self.last_inserted_cells_info
-                ]
+        # ---------------------------
+        # Throughput reward (ACK ratio)
+        # ---------------------------
+        throughput_rewards = []
+        for cell in cells_in_slotframe:
+            num_tx, num_ack = cell[2], cell[3]
+            if num_tx > 0:
+                throughput_rewards.append(num_ack / float(num_tx))
+        if throughput_rewards:
+            tp =  w_throughput * sum(throughput_rewards) / len(throughput_rewards)
+            reward += tp 
+            print("Throughput")
+            print("\t {0}".format(tp))
 
+        # ---------------------------
+        # Utilization reward (how busy are the cells?)
+        # ---------------------------
+        utilization_rewards = []
+        for cell in cells_in_slotframe:
+            utilization_rewards.append(min(cell[2], 1))  # 1 if at least used once
+        if utilization_rewards:
+            ut = w_utilization * (sum(utilization_rewards) / len(utilization_rewards))
+            reward += ut 
+            print("Utilization")
+            print("\t {0}".format(ut))         
 
-                for cell in cells_in_slotframe:
-                    if (cell[0], cell[1]) in last_requested_cells:
-                        # we test to see if it is being used
-                        # tx acks
-                        if cell[3] > 0:
-                            return 1
-                # se nenhum das celulas que requisitei foram inseridas, isso eh ruim
-                return -1
-            return 0
-        else:
-            if self.last_removed_cells_info:
-                preferred_parent = self.mote.rpl.getPreferredParent()
+        # ---------------------------
+        # Latency proxy (queue reduction)
+        # Requires queue size info: implement get_queue_size()
+        # ---------------------------
+        current_q = len(self.mote.tsch.txQueue)
+        if hasattr(self, "prev_queue_size"):
+            delta_q = self.prev_queue_size - current_q
+            lt = w_latency * delta_q
+            reward += lt 
+            print("Latency")
+            print("\t {0}".format(lt))     
+        self.prev_queue_size = current_q
 
-                cells_in_slotframe = [
-                    (cell.channel_offset, cell.slot_offset, cell.num_tx, cell.num_tx_ack) 
-                    for cell in self.mote.tsch.get_cells(preferred_parent, self.SLOTFRAME_HANDLE)
-                ]
+        # ---------------------------
+        # Energy penalty (more cells more cost)
+        # ---------------------------
+        energy = w_energy * len(cells_in_slotframe)
+        reward -= energy
+        print("Energy")
+        print("\t {0}".format(energy))          
 
-                last_requested_cells = [
-                    (cell['channelOffset'], cell['slotOffset'])
-                    for cell in self.last_removed_cells_info
-                ]
-
-                for cell in cells_in_slotframe:
-                    if (cell[0], cell[1]) not in last_requested_cells:
-                        return 1
-                return -1
-            return 0
+        return reward
         
     
-
     def discretize_queue_ratio(self,queue_ratio):
         average_queue_ratio = self._compute_queue_average_ratio(queue_ratio)
         if queue_ratio > average_queue_ratio:
@@ -646,7 +652,7 @@ class SchedulingFunctionQlearning(SchedulingFunctionBase):
         next_state_number = self.map_state_to_number(next_state)
 
         # Compute reward
-        reward = self.compute_reward(next_state, action, op)
+        reward = self.compute_reward()
         # print(reward)
         self.CUMULATIVE_REWARD += reward  # Accumulate reward
             
@@ -660,12 +666,8 @@ class SchedulingFunctionQlearning(SchedulingFunctionBase):
         self.TD_ERROR = temporal_difference
         self.SUM_TD_ERROR += self.TD_ERROR
 
-        if self.EPISODE % 100 == 0:
-            self.AVERAGE_CUMULATIVE_REWARD_100 += self.CUMULATIVE_REWARD / float(100)
-            self.AVERAGE_TD_ERROR_100 += self.SUM_TD_ERROR / float(100)
-            self.CUMULATIVE_REWARD = 0
-            self.SUM_TD_ERROR = 0
-        # print('TD ERROR:', self.TD_ERROR)
+        self.QLEARNING_STATS['CUMULATIVE_REWARD'][self.EPISODE] = self.CUMULATIVE_REWARD
+
 
         # Update Q-value using Q-learning update rule
         self.Q_table[curr_state_number][action] += self.ALFA * temporal_difference
