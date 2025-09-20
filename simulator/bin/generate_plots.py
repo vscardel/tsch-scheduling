@@ -21,7 +21,7 @@ def generate_box_plots(data_lists, metric_label):
         (38/255, 166/255, 91/255, 0.7),    # Verde
     ]
     hatches = ['//', '..', 'xx', 'oo', '\\', '.']
-    labels = ['DynQ', 'DynQ-c', 'DynQ-q', 'Q-static', 'MSF', 'EMSF']
+    labels = ['DynQ', 'DynQ-t', 'DynQ-q', 'Q-static', 'MSF', 'EMSF']
 
     fig, ax = plt.subplots()
     box = ax.boxplot(
@@ -247,8 +247,8 @@ if __name__ == '__main__':
         50
     )
 
-    kpis_charge = load_kpis(
-        generate_folder_path('charge'),
+    kpis_traffic = load_kpis(
+        generate_folder_path('traffic'),
         50
     )
 
@@ -263,11 +263,11 @@ if __name__ == '__main__':
     pdrs_queue = get_metric_list('pdr', kpis_queue)
     final_scores_queue = load_scores(generate_folder_path('charge'))
 
-    latencies_charge = get_metric_list('latency', kpis_charge)
-    joins_time_charge = get_metric_list('join_time', kpis_charge)
-    lifetimes_charge = get_metric_list('lifetime', kpis_charge)
-    pdrs_charge = get_metric_list('pdr', kpis_charge)
-    final_scores_charge = load_scores(generate_folder_path('charge'))
+    latencies_traffic = get_metric_list('latency', kpis_traffic)
+    joins_time_traffic = get_metric_list('join_time', kpis_traffic)
+    lifetimes_traffic = get_metric_list('lifetime', kpis_traffic)
+    pdrs_traffic = get_metric_list('pdr', kpis_traffic)
+    final_scores_traffic = load_scores(generate_folder_path('charge'))
 
     latencies_tfq = get_metric_list('latency', kpis_traffic_queue_charge)
     joins_time_tfq = get_metric_list('join_time', kpis_traffic_queue_charge)
@@ -337,19 +337,19 @@ if __name__ == '__main__':
     # generate_bar_plots(score_data, 'Scores')
 
     generate_box_plots([
-        latencies_tfq, latencies_charge, latencies_queue, latencies_qsbrc24, latencies_msf, latencies_emsf
+        latencies_tfq, latencies_traffic, latencies_queue, latencies_qsbrc24, latencies_msf, latencies_emsf
     ], 'Latencies')
     generate_box_plots([
-        joins_time_tfq, joins_time_charge, joins_time_queue, joins_time_qsbrc24, joins_time_msf, joins_time_emsf
+        joins_time_tfq, joins_time_traffic, joins_time_queue, joins_time_qsbrc24, joins_time_msf, joins_time_emsf
     ], 'Join Times')
     generate_box_plots([
-        lifetimes_tfq, lifetimes_charge, lifetimes_queue,lifetimes_qsbrc24, lifetimes_msf, lifetimes_emsf
+        lifetimes_tfq, lifetimes_traffic, lifetimes_queue,lifetimes_qsbrc24, lifetimes_msf, lifetimes_emsf
     ], 'Lifetimes')
     generate_box_plots([
-        pdrs_tfq, pdrs_charge, pdrs_queue , pdrs_qsbrc24, pdrs_msf, pdrs_emsf
+        pdrs_tfq, pdrs_traffic, pdrs_queue , pdrs_qsbrc24, pdrs_msf, pdrs_emsf
     ], 'PDRS')
     generate_box_plots([
-        final_scores_tfq, final_scores_charge, final_scores_queue , final_scores_qsbrc24, final_scores_msf, final_scores_emsf
+        final_scores_tfq, final_scores_traffic, final_scores_queue , final_scores_qsbrc24, final_scores_msf, final_scores_emsf
     ], 'Scores')
 
     generate_contribution_plot(contributions = [7.12, 30.5, 53.1])
