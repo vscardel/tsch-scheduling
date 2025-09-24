@@ -1,6 +1,7 @@
 import json
 import numpy as np
 import os
+import random
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
 
@@ -8,9 +9,9 @@ import matplotlib.patches as mpatches
 from scipy.stats import norm
 
 # returns biggest json with reward data
-def find_biggest_reward_data(folder_path):
-    biggest = -1
-    final_data = None
+def find_random_reward_data(folder_path):
+    candidates = []
+
     runs = os.listdir(folder_path)
     for run_number in runs:
         if 'run_' in run_number:
@@ -18,51 +19,81 @@ def find_biggest_reward_data(folder_path):
             all_motes_data = os.listdir(curr_run_path)
             for mote in all_motes_data:
                 curr_mote_path = os.path.join(curr_run_path, mote)
-                with open(f'{curr_mote_path}/qlearning_stats.json', 'r') as f:
-                    data = json.load(f) 
-                    data_size = len(data['CUMULATIVE_REWARD']) + len(data['EPSILON'])
-                    if data_size > biggest:
-                        final_data = data 
-                        biggest = data_size
-    return final_data 
+                file_path = os.path.join(curr_mote_path, "qlearning_stats.json")
+                if os.path.isfile(file_path):
+                    candidates.append(file_path)
+
+    chosen_file = random.choice(candidates)
+    with open(chosen_file, 'r') as f:
+        data = json.load(f)
+
+    return data
+
+def moving_average(x, w=10):
+    """Simple moving average for smoothing."""
+    return np.convolve(x, np.ones(w), "valid") / w
 
 def generate_reward_epsilon_plots(folder_path):
+    data = find_random_reward_data(folder_path)
 
-    data = find_biggest_reward_data(folder_path)
+    # Sort episodes for consistent alignment
+    episodes = sorted(int(k) for k in data["CUMULATIVE_REWARD"].keys())
+    rewards = np.array([data["CUMULATIVE_REWARD"][str(k)] for k in episodes])
+    epsilons = np.array([data["EPSILON"][str(k)] for k in episodes])
 
-    # Convert keys to integers
-    episodes = np.array([int(k) for k in data["CUMULATIVE_REWARD"].keys()])
-    rewards = np.array(list(data["CUMULATIVE_REWARD"].values()))
-    epsilons = np.array(list(data["EPSILON"].values()))
+    # Moving average trend for rewards
+    window = min(10, len(rewards) // 5 or 1)  # adaptive window size
+    trend_rewards = moving_average(rewards, w=window)
+    trend_episodes = episodes[window - 1:]  # align with moving average
 
-    # Polynomial trend line for rewards
-    z = np.polyfit(episodes, rewards, 3)
-    p = np.poly1d(z)
-    trend_rewards = p(episodes)
-
-    # Plot
+    # === Combined Plot: Reward + Epsilon ===
     plt.figure(figsize=(12, 5))
 
     # Reward plot
     plt.subplot(1, 2, 1)
     plt.plot(episodes, rewards, label="Cumulative Reward", color="blue")
-    plt.plot(episodes, trend_rewards, label="Trend", color="red", linestyle="--")
+    # plt.plot(trend_episodes, trend_rewards, label="Trend (Moving Avg.)", color="red", linestyle="--")
     plt.xlabel("Episode")
     plt.ylabel("Cumulative Reward")
     plt.title("Cumulative Reward over Episodes")
     plt.legend()
 
     # Epsilon plot
-    # TODO: plot line at treshold
     plt.subplot(1, 2, 2)
-    plt.plot(episodes, epsilons[:len(episodes)], label="Epsilon", color="green")
+    plt.plot(episodes, epsilons, label="Epsilon", color="green")
+    plt.axhline(y=0.58, color="orange", linestyle="--", label="Threshold 0.58")
     plt.xlabel("Episode")
     plt.ylabel("Epsilon")
     plt.title("Epsilon Decay over Episodes")
     plt.legend()
 
     plt.tight_layout()
-    plt.savefig('./images/reward_graph.pdf')
+    plt.savefig("./images/reward_epsilon_combined.pdf")
+    plt.close()
+
+    # === Separate Epsilon-only Plot ===
+    plt.figure(figsize=(8, 5))
+    plt.plot(episodes, epsilons, label="Epsilon", color="green")
+    plt.axhline(y=0.58, color="orange", linestyle="--", label="Threshold 0.58")
+    plt.xlabel("Episode")
+    plt.ylabel("Epsilon")
+    plt.title("Epsilon Decay over Episodes")
+    plt.legend()
+    plt.tight_layout()
+    plt.savefig("./images/epsilon_only.pdf")
+    plt.close()
+
+    # === Separate Reward-only Plot ===
+    plt.figure(figsize=(8, 5))
+    plt.plot(episodes, rewards, label="Cumulative Reward", color="blue")
+    # plt.plot(trend_episodes, trend_rewards, label="Trend (Moving Avg.)", color="red", linestyle="--")
+    plt.xlabel("Episode")
+    plt.ylabel("Cumulative Reward")
+    plt.title("Cumulative Reward over Episodes")
+    plt.legend()
+    plt.tight_layout()
+    plt.savefig("./images/reward_only.pdf")
+    plt.close()
 
 
 def generate_box_plots(data_lists, metric_label):
