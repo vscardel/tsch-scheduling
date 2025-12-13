@@ -8,97 +8,90 @@ import matplotlib.patches as mpatches
 
 from scipy.stats import norm
 
-# returns biggest json with reward data
-def find_random_reward_data(folder_path):
-    candidates = []
+def load_all_reward_data(folder_path):
+    all_data = []
 
-    runs = os.listdir(folder_path)
-    for run_number in runs:
-        if 'run_' in run_number:
-            curr_run_path = os.path.join(folder_path, run_number)
-            all_motes_data = os.listdir(curr_run_path)
-            for mote in all_motes_data:
-                curr_mote_path = os.path.join(curr_run_path, mote)
-                file_path = os.path.join(curr_mote_path, "qlearning_stats.json")
-                if os.path.isfile(file_path):
-                    candidates.append(file_path)
+    for run in os.listdir(folder_path):
+        if not run.startswith("run_"):
+            continue
 
-    chosen_file = random.choice(candidates)
-    with open(chosen_file, 'r') as f:
-        data = json.load(f)
+        run_path = os.path.join(folder_path, run)
+        for mote in os.listdir(run_path):
+            mote_path = os.path.join(run_path, mote)
+            file_path = os.path.join(mote_path, "qlearning_stats.json")
 
-    return data
+            if not os.path.isfile(file_path):
+                continue
+
+            with open(file_path, "r") as f:
+                data = json.load(f)
+
+            if "CUMULATIVE_REWARD" not in data:
+                continue
+
+            all_data.append(data)
+
+    if not all_data:
+        raise RuntimeError("No valid qlearning_stats.json files found")
+
+    return all_data
+
+
+def aggregate_mean_reward_with_zeros(all_data):
+    # união de todos os episódios
+    all_episodes = set()
+    for data in all_data:
+        all_episodes |= set(data["CUMULATIVE_REWARD"].keys())
+
+    episodes = sorted(int(e) for e in all_episodes)
+
+    rewards_matrix = []
+
+    for data in all_data:
+        rewards = data["CUMULATIVE_REWARD"]
+        rewards_matrix.append(
+            [rewards.get(str(e), 0.0) for e in episodes]
+        )
+
+    rewards_matrix = np.array(rewards_matrix)
+    mean_rewards = rewards_matrix.mean(axis=0)
+
+    return episodes, mean_rewards
+
 
 def moving_average(x, w=10):
     """Simple moving average for smoothing."""
     return np.convolve(x, np.ones(w), "valid") / w
 
-def generate_reward_epsilon_plots(folder_path):
-    data = find_random_reward_data(folder_path)
+def generate_reward_plot(folder_path):
+    os.makedirs("images", exist_ok=True)
 
-    # Sort episodes for consistent alignment
-    episodes = sorted(int(k) for k in data["CUMULATIVE_REWARD"].keys())
-    rewards = np.array([data["CUMULATIVE_REWARD"][str(k)] for k in episodes])
-    epsilons = np.array([data["EPSILON"][str(k)] for k in episodes])
+    all_data = load_all_reward_data(folder_path)
+    episodes, mean_rewards = aggregate_mean_reward_with_zeros(all_data)
 
-    # Moving average trend for rewards
-    window = min(10, len(rewards) // 5 or 1)  # adaptive window size
-    trend_rewards = moving_average(rewards, w=window)
-    trend_episodes = episodes[window - 1:]  # align with moving average
+    print(episodes, mean_rewards)
 
-    # === Combined Plot: Reward + Epsilon ===
-    plt.figure(figsize=(12, 5))
-
-    # Reward plot
-    plt.subplot(1, 2, 1)
-    plt.plot(episodes, rewards, label="Cumulative Reward", color="blue")
-    # plt.plot(trend_episodes, trend_rewards, label="Trend (Moving Avg.)", color="red", linestyle="--")
+    plt.figure(figsize=(8, 5))
+    plt.plot(episodes, mean_rewards, label="Mean Cumulative Reward")
     plt.xlabel("Episode")
     plt.ylabel("Cumulative Reward")
-    plt.title("Cumulative Reward over Episodes")
-    plt.legend()
-
-    # Epsilon plot
-    plt.subplot(1, 2, 2)
-    plt.plot(episodes, epsilons, label="Epsilon", color="green")
-    plt.axhline(y=0.58, color="orange", linestyle="--", label="Threshold 0.58")
-    plt.xlabel("Episode")
-    plt.ylabel("Epsilon")
-    plt.title("Epsilon Decay over Episodes")
-    plt.legend()
+    plt.title("Cumulative Reward over Episodes (Mean over Motes)")
+    plt.legend(fontsize=16)
 
     plt.tight_layout()
-    plt.savefig("./images/reward_epsilon_combined.pdf")
+    plt.savefig("./images/reward_only_mean.pdf")
     plt.close()
-
-    # === Separate Epsilon-only Plot ===
-    plt.figure(figsize=(8, 5))
-    plt.plot(episodes, epsilons, label="Epsilon", color="green")
-    plt.axhline(y=0.58, color="orange", linestyle="--", label="Threshold 0.58")
-    plt.xlabel("Episode")
-    plt.ylabel("Epsilon")
-    plt.title("Epsilon Decay over Episodes")
-    plt.legend()
-    plt.tight_layout()
-    plt.savefig("./images/epsilon_only.pdf")
-    plt.close()
-
-    # === Separate Reward-only Plot ===
-    plt.figure(figsize=(8, 5))
-    plt.plot(episodes, rewards, label="Cumulative Reward", color="blue")
-    # plt.plot(trend_episodes, trend_rewards, label="Trend (Moving Avg.)", color="red", linestyle="--")
-    plt.xlabel("Episode")
-    plt.ylabel("Cumulative Reward")
-    plt.title("Cumulative Reward over Episodes")
-    plt.legend()
-    plt.tight_layout()
-    plt.savefig("./images/reward_only.pdf")
-    plt.close()
-
 
 def generate_box_plots(data_lists, metric_label):
     plt.style.use("presentation.mplstyle")
     plt.rcParams['text.usetex'] = True
+    plt.rcParams.update({
+        "axes.titlesize": 18,   # Título dos eixos
+        "axes.labelsize": 16,   # Label dos eixos (ylabel, xlabel)
+        "xtick.labelsize": 14,  # Ticks do eixo X
+        "ytick.labelsize": 14,  # Ticks do eixo Y
+        "legend.fontsize": 12   # Texto da legenda
+    })
 
     colors = [
         (33/255, 133/255, 197/255, 0.7),   # Azul
@@ -162,6 +155,14 @@ def generate_box_plots(data_lists, metric_label):
 
 def generate_bar_plots(metrics_data, metric_label):
     plt.style.use("presentation.mplstyle")
+    plt.rcParams.update({
+        "axes.titlesize": 18,   # Título dos eixos
+        "axes.labelsize": 16,   # Label dos eixos (ylabel, xlabel)
+        "xtick.labelsize": 14,  # Ticks do eixo X
+        "ytick.labelsize": 14,  # Ticks do eixo Y
+        "legend.fontsize": 12   # Texto da legenda
+    })
+    plt.figure(figsize=(8, 5))
     plt.rcParams['text.usetex'] = True
     barWidth = 0.1
     colors = [
@@ -206,7 +207,7 @@ def generate_bar_plots(metrics_data, metric_label):
         plt.ylabel('PDRS (\\%)')
     elif metric_label == 'Scores':
         plt.ylabel('')
-    plt.legend()
+    plt.legend(fontsize=16)
     plt.tight_layout()
     plt.savefig(f'./images/barplots/{metric_label.lower().replace(" ", "_")}.pdf', format='pdf', dpi=300)
     plt.clf()
@@ -442,4 +443,4 @@ if __name__ == '__main__':
 
     generate_contribution_plot(contributions = [14.9, 64.6, 7])
 
-    generate_reward_epsilon_plots(generate_folder_path('traffic_queue_charge'))
+    generate_reward_plot(generate_folder_path('traffic_queue_charge'))
