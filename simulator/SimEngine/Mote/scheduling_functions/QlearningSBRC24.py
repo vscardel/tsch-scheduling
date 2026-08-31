@@ -20,39 +20,12 @@ class SchedulingFunctionQlearningSBRC24(SchedulingFunctionBase):
     RX_CELL_OPT   = [d.CELLOPTION_RX]
     NUM_INITIAL_NEGOTIATED_TX_CELLS = 1
     NUM_INITIAL_NEGOTIATED_RX_CELLS = 0
-    used_cells = []
-    QUEUE_OVERFLOW = False
+    MAX_EPSLON = 1
+    INITIAL_REMAINING_BATTERY = 2821500
 
-    num_packets_in_current_episode = 0
-
-    #Q-learning
-    current_state = (0,0,2821500)
-    EPSLON = None
-    EPISODE = 0
-    Q_table = dict()
     num_states = 8
     STATE_SIZE = 3
     ACTION_STATE_SIZE = 3
-    cumulative_reward = 0
-    TX_CELLS_PASSED = 0
-    RX_CELLS_PASSED = 0
-    MAX_EPSLON = 1
-
-    #traffic estimate variables
-    TRAFFIC = 0
-    array_rxs_acks = []
-    prev_rx_ack = 0
-
-    #charge estimate variables
-    remaining_battery = 2821500
-    array_energy_consumed = []
-    AVERAGE_ENERGY_CONSUMED = 0
-
-
-    #queue estimate variables
-    AVERAGE_QUEUE_SIZE = 0
-    array_queue_ratio = []
-
 
     def __init__(self, mote):
         super(SchedulingFunctionQlearningSBRC24, self).__init__(mote)
@@ -66,6 +39,37 @@ class SchedulingFunctionQlearningSBRC24(SchedulingFunctionBase):
         self.MAX_TX_CELLS_PASSED = self.settings.MAX_TX_CELLS_PASSED
         self.MAX_RX_CELLS_PASSED = self.settings.MAX_RX_CELLS_PASSED
         self.EPSLON_THRESHOLD = self.settings.EPSLON_THRESHOLD
+
+        # Per-mote state. Each mote runs its own Q-learning agent, so none of
+        # this may live on the class: a mutable class attribute is a single
+        # object shared by every mote in the network.
+        self.used_cells = []
+        self.QUEUE_OVERFLOW = False
+
+        self.num_packets_in_current_episode = 0
+
+        #Q-learning
+        self.current_state = (0, 0, self.INITIAL_REMAINING_BATTERY)
+        self.EPSLON = None
+        self.EPISODE = 0
+        self.Q_table = dict()
+        self.cumulative_reward = 0
+        self.TX_CELLS_PASSED = 0
+        self.RX_CELLS_PASSED = 0
+
+        #traffic estimate variables
+        self.TRAFFIC = 0
+        self.array_rxs_acks = []
+        self.prev_rx_ack = 0
+
+        #charge estimate variables
+        self.remaining_battery = self.INITIAL_REMAINING_BATTERY
+        self.array_energy_consumed = []
+        self.AVERAGE_ENERGY_CONSUMED = 0
+
+        #queue estimate variables
+        self.AVERAGE_QUEUE_SIZE = 0
+        self.array_queue_ratio = []
 
     def start(self):
         slotframe_0 = self.mote.tsch.get_slotframe(0)
