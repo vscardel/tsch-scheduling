@@ -28,8 +28,8 @@ class SchedulingFunctionSFNone(SchedulingFunctionBase):
     def stop(self):
         pass # do nothing
 
-    def indication_slotframe_window_ending(self):
-        pass
+    def indication_slotframe_window_ending(self, slotframe_period_size):
+        pass # do nothing
     
     def indication_neighbor_added(self, neighbor_mac_addr):
         pass # do nothing

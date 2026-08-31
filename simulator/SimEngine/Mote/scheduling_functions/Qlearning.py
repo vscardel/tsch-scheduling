@@ -71,6 +71,7 @@ class SchedulingFunctionQlearning(SchedulingFunctionBase):
         self.current_state = ()
         self.EPSLON = None
         self.EPISODE = 0
+        self.RECORDED_STEP = 0
         self.Q_table = dict()
         self.TX_CELLS_PASSED = 0
         self.RX_CELLS_PASSED = 0
@@ -155,8 +156,9 @@ class SchedulingFunctionQlearning(SchedulingFunctionBase):
 
             # 3. Atualiza episodio e epslon
             self.EPISODE += 1
+            self.RECORDED_STEP += 1
             self.EPSLON = self.MIN_EPSLON + (self.MAX_EPSLON - self.MIN_EPSLON) * np.exp(-self.EPSLON_DECAY_RATE * self.EPISODE)
-            self.QLEARNING_STATS['EPSILON'][self.EPISODE] = self.EPSLON
+            self.QLEARNING_STATS['EPSILON'][self.RECORDED_STEP] = self.EPSLON
 
             # print(self.EPSLON)
             # print('EPSLON')
@@ -227,14 +229,13 @@ class SchedulingFunctionQlearning(SchedulingFunctionBase):
         return function_name
 
     def stop(self):
+        # Called when the mote desynchronises, not at the end of the run. The
+        # agent starts exploring again, but QLEARNING_STATS and RECORDED_STEP
+        # are the record of the whole run and must survive: they are what
+        # SimEngine.save_qlearning_stats writes out at the end.
         self.mote.tsch.delete_slotframe(self.SLOTFRAME_HANDLE)
         self.EPSLON = 0
         self.EPISODE = 0
-        self.CUMULATIVE_REWARD = 0
-        self.QLEARNING_STATS = {
-            'CUMULATIVE_REWARD': {},
-            'EPSILON':{}
-        }
         
 
     def indication_neighbor_added(self, neighbor_mac_addr):
@@ -668,7 +669,7 @@ class SchedulingFunctionQlearning(SchedulingFunctionBase):
         self.TD_ERROR = temporal_difference
         self.SUM_TD_ERROR += self.TD_ERROR
 
-        self.QLEARNING_STATS['CUMULATIVE_REWARD'][self.EPISODE] = self.CUMULATIVE_REWARD
+        self.QLEARNING_STATS['CUMULATIVE_REWARD'][self.RECORDED_STEP] = self.CUMULATIVE_REWARD
 
 
         # Update Q-value using Q-learning update rule
