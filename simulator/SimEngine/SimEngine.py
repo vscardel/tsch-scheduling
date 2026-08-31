@@ -332,14 +332,16 @@ class DiscreteEventEngine(threading.Thread):
     def _save_qlearning_mote_stat(self, mote):
         current_id = mote.id
         file_path = '../bin/simData/{0}/exec_numMotes_{1}/run_{2}/{3}/qlearning_stats.json'.format(self.settings.logDirectory, len(self.motes), self.run_id, current_id)
-        if not os.path.exists(os.path.dirname(file_path)):
-            try:
-                os.makedirs(os.path.dirname(file_path))
-                with open(os.path.join(file_path), 'w') as f:
-                    json.dump(mote.sf.QLEARNING_STATS, f)
-            except OSError as exc: # Guard against race condition
-                if exc.errno != errno.EEXIST:
-                    raise
+        directory = os.path.dirname(file_path)
+
+        try:
+            os.makedirs(directory)
+        except OSError as exc: # the directory already exists, which is fine
+            if exc.errno != errno.EEXIST:
+                raise
+
+        with open(file_path, 'w') as f:
+            json.dump(mote.sf.QLEARNING_STATS, f)
 
     def _actionPauseSim(self):
         assert self.simPaused==False
