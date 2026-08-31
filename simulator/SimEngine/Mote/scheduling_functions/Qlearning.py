@@ -25,64 +25,14 @@ class SchedulingFunctionQlearning(SchedulingFunctionBase):
     RX_CELL_OPT   = [d.CELLOPTION_RX]
     NUM_INITIAL_NEGOTIATED_TX_CELLS = 1
     NUM_INITIAL_NEGOTIATED_RX_CELLS = 0
-    QUEUE_OVERFLOW = False
-
-    charge = 0
-    old_charge = 0
-
-    prev_charge = 0
-
-    last_inserted_cells_info = []
-    last_removed_cells_info = []
-
-    previous_queue_length = 0
-
-    #poisson_computation
-    num_packets_in_current_episode = 0
-    curr_biggest_inst_score = 0
-
-    #Q-learning
-    current_state = ()
-    EPSLON = None         
-    EPISODE = 0
-    Q_table = dict()
-    TX_CELLS_PASSED = 0
-    RX_CELLS_PASSED = 0
     MAX_EPSLON = 1
+    INITIAL_REMAINING_BATTERY = 2821500
 
     #rewards weigths
     WQ = 0.33
     WE = 0.33
     WT = 0.33
 
-    inserted_cells = []
-
-
-    CUMULATIVE_REWARD = 0
-    TD_ERROR = 0
-    SUM_TD_ERROR = 0
-    AVERAGE_TD_ERROR_100 = 0
-    AVERAGE_CUMULATIVE_REWARD_100 = 0
-    QLEARNING_STATS = {
-        'CUMULATIVE_REWARD': {},
-        'EPSILON':{}
-    }
-
-    #traffic estimate variables
-    TRAFFIC = 0
-    array_rxs_acks = []
-    prev_rx_ack = 0
-
-    #charge estimate variables
-    remaining_battery = 2821500
-    AVERAGE_ENERGY_CONSUMED = 0
-    array_energy_consumed = []
-
-    #queue estimate variables
-    AVERAGE_QUEUE_SIZE = 0
-    array_queue_ratio = []
-
-    
     def __init__(self, mote):
         super(SchedulingFunctionQlearning, self).__init__(mote)
         self.locked_slots         = set([])
@@ -98,6 +48,58 @@ class SchedulingFunctionQlearning(SchedulingFunctionBase):
         self.STATE_SIZE = self.settings.STATE_SIZE
         self.ACTION_STATE_SIZE = self.settings.ACTION_STATE_SIZE
         self.LAMBDA = self.settings.LAMBDA
+
+        # Per-mote state. Each mote runs its own Q-learning agent, so none of
+        # this may live on the class: a mutable class attribute is a single
+        # object shared by every mote in the network.
+        self.QUEUE_OVERFLOW = False
+
+        self.charge = 0
+        self.old_charge = 0
+        self.prev_charge = 0
+
+        self.last_inserted_cells_info = []
+        self.last_removed_cells_info = []
+
+        self.previous_queue_length = 0
+
+        #poisson_computation
+        self.num_packets_in_current_episode = 0
+        self.curr_biggest_inst_score = 0
+
+        #Q-learning
+        self.current_state = ()
+        self.EPSLON = None
+        self.EPISODE = 0
+        self.Q_table = dict()
+        self.TX_CELLS_PASSED = 0
+        self.RX_CELLS_PASSED = 0
+
+        self.inserted_cells = []
+
+        self.CUMULATIVE_REWARD = 0
+        self.TD_ERROR = 0
+        self.SUM_TD_ERROR = 0
+        self.AVERAGE_TD_ERROR_100 = 0
+        self.AVERAGE_CUMULATIVE_REWARD_100 = 0
+        self.QLEARNING_STATS = {
+            'CUMULATIVE_REWARD': {},
+            'EPSILON': {}
+        }
+
+        #traffic estimate variables
+        self.TRAFFIC = 0
+        self.array_rxs_acks = []
+        self.prev_rx_ack = 0
+
+        #charge estimate variables
+        self.remaining_battery = self.INITIAL_REMAINING_BATTERY
+        self.AVERAGE_ENERGY_CONSUMED = 0
+        self.array_energy_consumed = []
+
+        #queue estimate variables
+        self.AVERAGE_QUEUE_SIZE = 0
+        self.array_queue_ratio = []
 
     def start(self):
         self.name_to_compute_factor = {
