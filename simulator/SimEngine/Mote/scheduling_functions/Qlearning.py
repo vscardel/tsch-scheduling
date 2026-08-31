@@ -45,7 +45,12 @@ class SchedulingFunctionQlearning(SchedulingFunctionBase):
         self.SLOTFRAME_INTERVAL_SIZE = self.settings.SLOTFRAME_INTERVAL_SIZE
         self.MAX_TX_CELLS_PASSED = self.settings.MAX_TX_CELLS_PASSED
         self.MAX_RX_CELLS_PASSED = self.settings.MAX_RX_CELLS_PASSED
-        self.STATE_SIZE = self.settings.STATE_SIZE
+        # One binary factor per state variable, so the Q-table needs a row for
+        # every combination of them. Deriving this rather than reading
+        # settings.STATE_SIZE keeps the two from disagreeing: a table smaller
+        # than the state space raises KeyError the first time the agent reaches
+        # a state that has no row.
+        self.STATE_SIZE = 2 ** len(self.settings.factorial_combinations)
         self.ACTION_STATE_SIZE = self.settings.ACTION_STATE_SIZE
         self.LAMBDA = self.settings.LAMBDA
 
