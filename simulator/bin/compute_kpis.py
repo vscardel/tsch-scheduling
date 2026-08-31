@@ -20,6 +20,7 @@ import glob
 import numpy as np
 
 from SimEngine import SimLog
+from results_path import latest_subfolder
 import SimEngine.Mote.MoteDefines as d
 
 # =========================== defines =========================================
@@ -419,11 +420,12 @@ def parseCliParams():
 
 def main():
 
-    # FIXME: This logic could be a helper method for other scripts
-    # Identify simData having the latest results. That directory should have
-    # the latest "mtime".
     cliparams = parseCliParams()
     subfolder = cliparams['subfolder']
+    if subfolder is None:
+        subfolder = latest_subfolder()
+        print('no --subfolder given, using {0}'.format(subfolder))
+
     for infile in glob.glob(os.path.join(subfolder, '*.dat')):
         print('generating KPIs for {0}'.format(infile))
 

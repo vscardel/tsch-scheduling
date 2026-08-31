@@ -14,6 +14,8 @@ import os
 import argparse
 import json
 import glob
+
+from results_path import latest_subfolder
 from collections import OrderedDict
 import numpy as np
 
@@ -42,14 +44,11 @@ def main(options):
     data = OrderedDict()
 
     # chose lastest results
-    subfolders = list(
-        [os.path.join(options.inputfolder, x) for x in os.listdir(options.inputfolder)]
-    )
-    subfolder = max(subfolders, key=os.path.getmtime)
+    subfolder = latest_subfolder(options.inputfolder)
 
     for key in options.kpis:
         # load data
-        for file_path in sorted(glob.glob(subfolder)):
+        for file_path in sorted(glob.glob(os.path.join(subfolder, '*.dat.kpi'))):
             curr_combination = os.path.basename(file_path)[:-8] # remove .dat.kpi
             with open(file_path, 'r') as f:
 
