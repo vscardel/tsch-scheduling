@@ -1,0 +1,6 @@
+# Development-only dependencies. Deliberately kept out of
+# simulator/requirements.txt so the pinned runtime stack that produced the
+# paper's results stays untouched.
+#
+# pytest 4.6.x is the last series supporting Python 2.7.
+pytest==4.6.11

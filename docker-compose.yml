@@ -1,0 +1,17 @@
+services:
+  sim:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    platform: linux/amd64
+    image: tsch-sim:py27
+    # Bind-mount the simulator so edits on the host are picked up immediately
+    # and results written inside the container land in the repository.
+    volumes:
+      - ./simulator:/sim
+    working_dir: /sim/bin
+    environment:
+      MPLBACKEND: Agg
+      PYTHONUNBUFFERED: "1"
+    stdin_open: true
+    tty: true
