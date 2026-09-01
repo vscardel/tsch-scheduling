@@ -320,6 +320,7 @@ class Tsch(object):
             neighbor,
             link_type
         )
+        cell.created_asn = self.engine.getAsn()
         slotframe.add(cell)
         if isinstance(self.mote.sf, SchedulingFunctionQlearning):        
             if not self.mote.dagRoot:
@@ -1775,6 +1776,12 @@ class Cell(object):
         self.num_tx     = 0
         self.num_tx_ack = 0
         self.num_rx     = 0
+
+        # when the cell entered the schedule, filled in by TSCH.addCell. Until
+        # its slot has come round at least once the cell has had no chance to
+        # carry anything, and counting it as idle before then punishes the act
+        # of adding it.
+        self.created_asn = None
 
     def __repr__(self):
 

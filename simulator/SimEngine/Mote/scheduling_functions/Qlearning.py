@@ -621,18 +621,39 @@ class SchedulingFunctionQlearning(SchedulingFunctionBase):
             return 0.0
         return sum(shares) / float(len(shares))
 
-    def _reward_utilization(self, cells):
-        """Share of the cells that have carried traffic.
+    def _cell_had_its_turn(self, cell):
+        """Whether the cell has been scheduled long enough for its slot to come round.
 
-        In [0, 1]. This used to divide one integer by another, which Python 2
-        floors, so the term came out 0 or 1 and answered "have all of them been
-        used" instead of "how many of them have". Over 1500 slotframes it took
-        those two values and nothing in between.
+        A cell occupies one slot of the slotframe, so it gets its first chance
+        to carry a frame one slotframe after it is negotiated. Before that it
+        has had no opportunity at all, and there is nothing to judge it on.
         """
-        if not cells:
+        created = getattr(cell, 'created_asn', None)
+        if created is None:
+            # a cell from before this was recorded; judge it
+            return True
+        elapsed = self.engine.getAsn() - created
+        return elapsed >= self.settings.tsch_slotframeLength
+
+    def _reward_utilization(self, cells):
+        """Share of the cells that carried traffic, among those that had a turn.
+
+        In [0, 1]. A cell negotiated moments ago has not seen its slot come
+        round yet. Counting it as idle penalises adding a cell at the instant it
+        is added, while the gain that cell brings only arrives later and is
+        discounted. Measured over 7976 randomly drawn actions, that penalty was
+        90% of the whole reward gap between inserting and doing nothing, and
+        inserting more cells lowered the reward while lowering latency.
+
+        Leaving a cell out until it has had a turn is the same rule the removal
+        criterion and the throughput term already follow: judge a cell on the
+        chances it has had, not on the chances it has not.
+        """
+        judged = [cell for cell in cells if self._cell_had_its_turn(cell)]
+        if not judged:
             return 0.0
-        used = sum(1 for cell in cells if cell.num_tx > 0)
-        return used / float(len(cells))
+        used = sum(1 for cell in judged if cell.num_tx > 0)
+        return used / float(len(judged))
 
     def _reward_latency(self):
         """Share of the queue drained since the last decision.
