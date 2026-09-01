@@ -90,38 +90,56 @@ def test_energy_is_the_share_of_the_slotframe_claimed(agent):
     assert 0.0 <= agent.sf._reward_energy(cells) <= 1.0
 
 
-def test_latency_is_the_share_of_the_queue_drained(agent):
+def test_latency_is_how_empty_the_queue_is(agent):
     size = agent.sf.settings.tsch_tx_queue_size
     queue = agent.tsch.txQueue
 
-    # the first reading has nothing to compare against
     del queue[:]
-    queue.extend([None] * 4)
+    assert agent.sf._reward_latency() == 1.0
+
+    queue.extend([None] * size)
     assert agent.sf._reward_latency() == 0.0
 
-    # three packets left the queue
     del queue[:]
-    queue.extend([None])
-    assert agent.sf._reward_latency() == pytest.approx(3 / float(size))
+    queue.extend([None] * (size // 2))
+    assert agent.sf._reward_latency() == pytest.approx(
+        1.0 - (size // 2) / float(size)
+    )
 
-    # two packets arrived
+
+def test_latency_does_not_depend_on_the_previous_reading(agent):
+    # as a difference this term averaged to zero and said nothing about whether
+    # the queue was short, only whether it had moved
+    queue = agent.tsch.txQueue
+    del queue[:]
     queue.extend([None, None])
-    assert agent.sf._reward_latency() == pytest.approx(-2 / float(size))
+
+    primeira = agent.sf._reward_latency()
+    segunda = agent.sf._reward_latency()
+
+    assert primeira == segunda
+
+
+def test_a_queue_over_its_size_does_not_go_negative(agent):
+    queue = agent.tsch.txQueue
+    del queue[:]
+    queue.extend([None] * (agent.sf.settings.tsch_tx_queue_size + 5))
+
+    assert agent.sf._reward_latency() == 0.0
 
 
 def test_every_term_stays_inside_its_range(agent):
-    size  = agent.sf.settings.tsch_tx_queue_size
     cells = [StubCell(num_tx=4, num_tx_ack=1), StubCell()]
+    queue = agent.tsch.txQueue
 
     assert 0.0 <= agent.sf._reward_throughput(cells)  <= 1.0
     assert 0.0 <= agent.sf._reward_utilization(cells) <= 1.0
     assert 0.0 <= agent.sf._reward_energy(cells)      <= 1.0
 
-    del agent.tsch.txQueue[:]
-    agent.tsch.txQueue.extend([None] * size)
-    agent.sf._reward_latency()
-    del agent.tsch.txQueue[:]
-    assert agent.sf._reward_latency() == pytest.approx(1.0)
+    for cheia in (0, 1, agent.sf.settings.tsch_tx_queue_size):
+        del queue[:]
+        queue.extend([None] * cheia)
+        assert 0.0 <= agent.sf._reward_latency() <= 1.0
 
 
 def test_the_reward_is_the_weighted_sum_of_the_four(agent, monkeypatch):
@@ -130,14 +148,14 @@ def test_the_reward_is_the_weighted_sum_of_the_four(agent, monkeypatch):
     monkeypatch.setattr(agent.tsch, 'get_cells', lambda mac, handle: [])
     monkeypatch.setattr(sf, '_reward_throughput',  lambda cells: 0.5)
     monkeypatch.setattr(sf, '_reward_utilization', lambda cells: 0.25)
-    monkeypatch.setattr(sf, '_reward_latency',     lambda: -0.5)
+    monkeypatch.setattr(sf, '_reward_latency',     lambda: 0.5)
     monkeypatch.setattr(sf, '_reward_energy',      lambda cells: 0.1)
 
     sf.W_THROUGHPUT, sf.W_UTILIZATION = 1.0, 2.0
     sf.W_LATENCY, sf.W_ENERGY         = 3.0, 4.0
 
-    # 0.5 + 2*0.25 + 3*(-0.5) - 4*0.1
-    assert sf.compute_reward() == pytest.approx(-0.9)
+    # 0.5 + 2*0.25 + 3*0.5 - 4*0.1
+    assert sf.compute_reward() == pytest.approx(2.1)
 
 
 def test_the_terms_are_recorded_for_later(agent, monkeypatch):

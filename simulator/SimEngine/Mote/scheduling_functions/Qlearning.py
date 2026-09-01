@@ -76,7 +76,6 @@ class SchedulingFunctionQlearning(SchedulingFunctionBase):
         self.last_removed_cells_info = []
 
         self.previous_queue_length = 0
-        self.prev_queue_size = None
 
         #poisson_computation
         self.num_packets_in_current_episode = 0
@@ -656,21 +655,27 @@ class SchedulingFunctionQlearning(SchedulingFunctionBase):
         return used / float(len(judged))
 
     def _reward_latency(self):
-        """Share of the queue drained since the last decision.
+        """How empty the transmit queue is, in [0, 1].
 
-        In [-1, 1]. The queue holds tsch_tx_queue_size packets, so dividing by
-        it turns a packet count into a share of the queue. This is the only
-        term that can go negative, so it spans two units where the others span
-        one, and at equal weights it moves the reward twice as far.
+        This used to be the change in queue length since the last decision, the
+        Delta Q of the paper. A difference averages to zero once a mote settles,
+        so it says whether the queue moved, not whether it is short. Across 183
+        motes its mean was 0.0006 while the other terms sat between 0.08 and
+        0.93, and its correlation with the mote's own measured latency was
+        0.010. The term named latency carried no information about latency.
+
+        Queue length is what latency is made of, so the level is the thing to
+        reward. This also gives the energy term something to push against: over
+        the same 183 motes the energy term, which counts cells and is
+        subtracted, correlated with low latency at -0.567, the strongest of the
+        four. The reward was subtracting its most informative signal and
+        crediting nothing in return.
         """
-        current = len(self.mote.tsch.txQueue)
-        if self.prev_queue_size is None:
-            # nothing to compare the first reading against
-            self.prev_queue_size = current
-            return 0.0
-        drained = self.prev_queue_size - current
-        self.prev_queue_size = current
-        return drained / float(self.settings.tsch_tx_queue_size)
+        occupancy = (
+            len(self.mote.tsch.txQueue) /
+            float(self.settings.tsch_tx_queue_size)
+        )
+        return 1.0 - min(1.0, occupancy)
 
     def _reward_energy(self, cells):
         """Share of the slotframe the mote has claimed.
