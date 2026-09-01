@@ -135,18 +135,31 @@ def load_kpis(folder_path, num_motes):
             print("Something went wrong reading KPIs on try {0}".format(tentativa))
     return kpis
 
+def compute_run_lifetime(run_kpis):
+    """Mean battery lifetime over the motes of one run, in years.
+
+    A mote whose lifetime could not be estimated reports a string rather than a
+    number, and counts as zero.
+    """
+    lifetimes = []
+    for mote, mote_kpis in run_kpis.items():
+        if mote == 'global-stats':
+            continue
+        lifetime = mote_kpis.get('lifetime_AA_years')
+        if not isinstance(lifetime, (int, float)):
+            lifetime = 0
+        lifetimes.append(lifetime)
+    if not lifetimes:
+        return 0.0
+    return sum(lifetimes) / float(len(lifetimes))
+
+
 def compute_average_lifetime(kpis):
-    average_lifetime = []
-    for run in kpis:
-        run_lifetime = []
-        for mote in kpis[run]:
-            if mote != 'global-stats':
-                lifetime = kpis[run][mote]['lifetime_AA_years']
-                if isinstance(lifetime, unicode) or (not lifetime):
-                    lifetime = 0
-                run_lifetime.append(lifetime)
-        average_lifetime.append(sum(run_lifetime)/len(run_lifetime))
-    return sum(average_lifetime)/len(average_lifetime)
+    """Mean battery lifetime over every run."""
+    per_run = [compute_run_lifetime(kpis[run]) for run in kpis]
+    if not per_run:
+        return 0.0
+    return sum(per_run) / float(len(per_run))
         
 
 def compute_score(kpis):
@@ -158,7 +171,10 @@ def compute_score(kpis):
             #convert join_time to seconds
             join_time = kpis[run]['global-stats']["joining-time"][0]['mean'] / 100
             #years
-            network_lifetime = compute_average_lifetime(kpis)
+            # this run's lifetime, not the average over every run. Taking the
+            # average here gave all the runs the same value, so a quarter of the
+            # score was a constant and could not tell one run from another.
+            network_lifetime = compute_run_lifetime(kpis[run])
             packet_delivery_ratio = kpis[run]['global-stats']['e2e-upstream-delivery'][0]['value']
 
             metrics_vector = [

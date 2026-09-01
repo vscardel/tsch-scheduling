@@ -53,6 +53,10 @@
             "sixlowpan_reassembly_buffers_num": 1, 
             "SLOTFRAME_INTERVAL_SIZE": 10, 
             "sf_class": "Qlearning", 
+            "W_THROUGHPUT": 1, 
+            "W_UTILIZATION": 1, 
+            "W_LATENCY": 1, 
+            "W_ENERGY": 1, 
             "LAMBDA": 2
         }, 
         "combination": {
