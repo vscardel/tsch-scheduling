@@ -54,6 +54,15 @@ class SchedulingFunctionQlearning(SchedulingFunctionBase):
         self.ACTION_STATE_SIZE = self.settings.ACTION_STATE_SIZE
         self.LAMBDA = self.settings.LAMBDA
 
+        # Reward weights. The four terms are all shares of something, so equal
+        # weights are the neutral starting point and need no justification
+        # beyond that. A configuration may override any of them, which is what
+        # a sensitivity analysis varies.
+        self.W_THROUGHPUT  = getattr(self.settings, 'W_THROUGHPUT', 1.0)
+        self.W_UTILIZATION = getattr(self.settings, 'W_UTILIZATION', 1.0)
+        self.W_LATENCY     = getattr(self.settings, 'W_LATENCY', 1.0)
+        self.W_ENERGY      = getattr(self.settings, 'W_ENERGY', 1.0)
+
         # Per-mote state. Each mote runs its own Q-learning agent, so none of
         # this may live on the class: a mutable class attribute is a single
         # object shared by every mote in the network.
@@ -67,6 +76,7 @@ class SchedulingFunctionQlearning(SchedulingFunctionBase):
         self.last_removed_cells_info = []
 
         self.previous_queue_length = 0
+        self.prev_queue_size = None
 
         #poisson_computation
         self.num_packets_in_current_episode = 0
@@ -90,7 +100,8 @@ class SchedulingFunctionQlearning(SchedulingFunctionBase):
         self.AVERAGE_CUMULATIVE_REWARD_100 = 0
         self.QLEARNING_STATS = {
             'CUMULATIVE_REWARD': {},
-            'EPSILON': {}
+            'EPSILON': {},
+            'REWARD_TERMS': {}
         }
 
         #traffic estimate variables
@@ -559,73 +570,100 @@ class SchedulingFunctionQlearning(SchedulingFunctionBase):
     
     
     def compute_reward(self):
+        """The weighted sum of four terms, each of them a fraction.
 
-        reward = 0.0
-
+        Every term is a share of something the mote can measure, so all four
+        span the same range and the weights compare like with like. They did
+        not before: throughput and utilisation were fractions, the latency term
+        was a packet count and the energy term a cell count. A weight then has
+        to absorb the units as well as express a preference, which is why the
+        energy weight had to be 0.01. It was a unit conversion wearing the
+        clothes of a preference.
+        """
         preferred_parent = self.mote.rpl.getPreferredParent()
-        cells_in_slotframe = [
-            (cell.channel_offset, cell.slot_offset, cell.num_tx, cell.num_tx_ack) 
-            for cell in self.mote.tsch.get_cells(preferred_parent, self.SLOTFRAME_HANDLE)
-        ]
+        cells = self.mote.tsch.get_cells(
+            preferred_parent,
+            self.SLOTFRAME_HANDLE
+        )
 
-        # ---------------------------
-        # Weights (tune as needed)
-        # ---------------------------
-        w_throughput  = 0.8
-        w_utilization = 0.2
-        w_latency     = 0.8
-        w_energy      = 0.01
+        throughput  = self._reward_throughput(cells)
+        utilization = self._reward_utilization(cells)
+        latency     = self._reward_latency()
+        energy      = self._reward_energy(cells)
 
-        # ---------------------------
-        # Throughput reward (ACK ratio)
-        # ---------------------------
-        throughput_rewards = []
-        for cell in cells_in_slotframe:
-            num_tx, num_ack = cell[2], cell[3]
-            if num_tx > 0:
-                throughput_rewards.append(num_ack / float(num_tx))
-        if throughput_rewards:
-            tp =  w_throughput * sum(throughput_rewards) / len(throughput_rewards)
-            reward += tp 
-            print("Throughput")
-            print("\t {0}".format(tp))
+        reward = (
+            self.W_THROUGHPUT  * throughput +
+            self.W_UTILIZATION * utilization +
+            self.W_LATENCY     * latency -
+            self.W_ENERGY      * energy
+        )
 
-        # ---------------------------
-        # Utilization reward (how busy are the cells?)
-        # ---------------------------
-        utilization_rewards = []
-        for cell in cells_in_slotframe:
-            utilization_rewards.append(min(cell[2], 1))  # 1 if at least used once
-        if utilization_rewards:
-            ut = w_utilization * (sum(utilization_rewards) / len(utilization_rewards))
-            reward += ut 
-            print("Utilization")
-            print("\t {0}".format(ut))         
-
-        # ---------------------------
-        # Latency proxy (queue reduction)
-        # Requires queue size info: implement get_queue_size()
-        # ---------------------------
-        current_q = len(self.mote.tsch.txQueue)
-        if hasattr(self, "prev_queue_size"):
-            delta_q = self.prev_queue_size - current_q
-            lt = w_latency * delta_q
-            reward += lt 
-            print("Latency")
-            print("\t {0}".format(lt))     
-        self.prev_queue_size = current_q
-
-        # ---------------------------
-        # Energy penalty (more cells more cost)
-        # ---------------------------
-        energy = w_energy * len(cells_in_slotframe)
-        reward -= energy
-        print("Energy")
-        print("\t {0}".format(energy))          
-
+        self.QLEARNING_STATS['REWARD_TERMS'][self.RECORDED_STEP] = {
+            'throughput' : throughput,
+            'utilization': utilization,
+            'latency'    : latency,
+            'energy'     : energy,
+            'reward'     : reward,
+        }
         return reward
-        
-    
+
+    def _reward_throughput(self, cells):
+        """Mean acknowledged share over the cells that have transmitted.
+
+        In [0, 1]. Cells that never transmitted have no share to speak of and
+        are left out rather than counted as zero.
+        """
+        shares = [
+            cell.num_tx_ack / float(cell.num_tx)
+            for cell in cells if cell.num_tx > 0
+        ]
+        if not shares:
+            return 0.0
+        return sum(shares) / float(len(shares))
+
+    def _reward_utilization(self, cells):
+        """Share of the cells that have carried traffic.
+
+        In [0, 1]. This used to divide one integer by another, which Python 2
+        floors, so the term came out 0 or 1 and answered "have all of them been
+        used" instead of "how many of them have". Over 1500 slotframes it took
+        those two values and nothing in between.
+        """
+        if not cells:
+            return 0.0
+        used = sum(1 for cell in cells if cell.num_tx > 0)
+        return used / float(len(cells))
+
+    def _reward_latency(self):
+        """Share of the queue drained since the last decision.
+
+        In [-1, 1]. The queue holds tsch_tx_queue_size packets, so dividing by
+        it turns a packet count into a share of the queue. This is the only
+        term that can go negative, so it spans two units where the others span
+        one, and at equal weights it moves the reward twice as far.
+        """
+        current = len(self.mote.tsch.txQueue)
+        if self.prev_queue_size is None:
+            # nothing to compare the first reading against
+            self.prev_queue_size = current
+            return 0.0
+        drained = self.prev_queue_size - current
+        self.prev_queue_size = current
+        return drained / float(self.settings.tsch_tx_queue_size)
+
+    def _reward_energy(self, cells):
+        """Share of the slotframe the mote has claimed.
+
+        In [0, 1]. A cell occupies one slot and a slotframe has only so many,
+        so the count over the slotframe length is a share and sits beside the
+        other three.
+
+        This stands in for a real energy measure. It counts cells without
+        asking whether they transmit or listen, which cost very different
+        amounts of charge, and that is what reviewer 2.4 asked about.
+        """
+        return len(cells) / float(self.settings.tsch_slotframeLength)
+
     def discretize_queue_ratio(self,queue_ratio):
         average_queue_ratio = self._compute_queue_average_ratio(queue_ratio)
         if queue_ratio > average_queue_ratio:
