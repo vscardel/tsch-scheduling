@@ -75,8 +75,7 @@ apply immediately.
 
 ## Running without Docker
 
-Needs Python 2.7 on linux/x86_64. The pinned dependencies have no wheels for
-Apple Silicon and will not build there.
+Needs Python 2.7 on linux/x86_64. 
 
 ```bash
 python2 -m virtualenv venv
