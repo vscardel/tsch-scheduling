@@ -450,47 +450,71 @@ class SchedulingFunctionQlearning(SchedulingFunctionBase):
             return list(set(available_slots) - self.locked_slots)
         return []
     
+    def _is_unused_cell(self, cell, cell_option):
+        """Whether a cell is a candidate for removal.
+
+        A TX cell is a candidate when less than 80% of its transmissions were
+        acknowledged, and an RX cell when nothing was ever received on it. A TX
+        cell that has never transmitted has no ratio to judge it by, so it stays
+        until it has been used at least once. That also keeps num_tx out of a
+        division.
+        """
+        if cell.options != cell_option:
+            return False
+        # cell_option arrives as a list, the same shape as cell.options, so it
+        # has to be tested with "in". Comparing it to the bare d.CELLOPTION_TX
+        # string is never true and sends every cell down the RX branch.
+        if d.CELLOPTION_TX in cell_option:
+            if cell.num_tx == 0:
+                return False
+            return float(cell.num_tx_ack) / cell.num_tx < 0.8
+        return cell.num_rx == 0
+
+    def _num_cells_that_may_go(self, preferred_parent, cell_option):
+        """How many cells may be removed without cutting the last dedicated link.
+
+        MSF never deletes the last negotiated cell to the preferred parent, and
+        section 6.3 says insertion and removal otherwise follow the baseline.
+        A mote left with none falls back to its autonomous cell, which it shares
+        with every other child of that parent.
+        """
+        allocated = [
+            cell for cell in self.mote.tsch.get_cells(
+                preferred_parent,
+                self.SLOTFRAME_HANDLE
+            ) if cell.options == cell_option
+        ]
+        return max(0, len(allocated) - 1)
+
     def _get_unused_cells(self,cell_option):
         preferred_parent = self.mote.rpl.getPreferredParent()
-        complete_cells = []
-        if cell_option == d.CELLOPTION_TX:
-            available_cells = [
-                            {"channelOffset":cell.channel_offset,
-                                "slotOffset":cell.slot_offset,
-                                "num_tx": cell.num_tx,
-                                "num_tx_ack": cell.num_tx} 
-                            for cell in self.mote.tsch.get_cells(
-                            preferred_parent,
-                            self.SLOTFRAME_HANDLE
-                        ) if cell.options == cell_option and float(cell.num_tx_ack )/ cell.num_tx >= 0.8]
-            # and \
-            #         float(cell.num_tx_ack )/ cell.num_tx >= 0.8
-        else:
-            available_cells = [
-                            {"channelOffset":cell.channel_offset,
-                                "slotOffset":cell.slot_offset,
-                                "num_tx": cell.num_tx,
-                                "num_tx_ack": cell.num_tx} 
-                            for cell in self.mote.tsch.get_cells(
-                            preferred_parent,
-                            self.SLOTFRAME_HANDLE
-                        ) if cell.options == cell_option and cell.num_rx > 0]
-            # and \
-            #         cell.num_rx > 0
-        unused_cells = []
-        for cell in available_cells:
-            unused_cells.append(cell)
-        return unused_cells
+        return [
+            {"channelOffset": cell.channel_offset,
+             "slotOffset": cell.slot_offset,
+             "num_tx": cell.num_tx,
+             "num_tx_ack": cell.num_tx_ack}
+            for cell in self.mote.tsch.get_cells(
+                preferred_parent,
+                self.SLOTFRAME_HANDLE
+            ) if self._is_unused_cell(cell, cell_option)
+        ]
     
     def _compute_charge(self):
-        self.charge +=  self.mote.radio.stats['idle_listen'] * d.CHARGE_IdleListen_uC
-        self.charge += self.mote.radio.stats['tx_data_rx_ack'] * d.CHARGE_TxDataRxAck_uC
-        self.charge += self.mote.radio.stats['rx_data_tx_ack'] * d.CHARGE_RxDataTxAck_uC
-        self.charge += self.mote.radio.stats['tx_data'] * d.CHARGE_TxData_uC
-        self.charge += self.mote.radio.stats['rx_data'] * d.CHARGE_RxData_uC
-        self.charge += self.mote.radio.stats['sleep'] * d.CHARGE_Sleep_uC
+        # radio.stats are counters that only ever grow, so the total charge is
+        # recomputed from them on every call. Adding into self.charge would add
+        # the whole history again each time.
+        self.charge = (
+            self.mote.radio.stats['idle_listen'] * d.CHARGE_IdleListen_uC +
+            self.mote.radio.stats['tx_data_rx_ack'] * d.CHARGE_TxDataRxAck_uC +
+            self.mote.radio.stats['rx_data_tx_ack'] * d.CHARGE_RxDataTxAck_uC +
+            self.mote.radio.stats['tx_data'] * d.CHARGE_TxData_uC +
+            self.mote.radio.stats['rx_data'] * d.CHARGE_RxData_uC +
+            self.mote.radio.stats['sleep'] * d.CHARGE_Sleep_uC
+        )
+        # the state factor is what was spent since the last call, so what has
+        # to be kept is the total, not the difference
         curr_charge = self.charge - self.old_charge
-        self.old_charge = curr_charge
+        self.old_charge = self.charge
         return curr_charge
     
     def _compute_queue_ratio(self):
@@ -498,8 +522,11 @@ class SchedulingFunctionQlearning(SchedulingFunctionBase):
     
                 
     def _compute_traffic(self):
-        current_traffic = self.mote.radio.stats["rx_data_tx_ack"] - self.prev_rx_ack
-        self.prev_rx_ack = current_traffic
+        # same as _compute_charge: rx_data_tx_ack is a counter that only grows,
+        # so what has to be kept is the counter, not the difference
+        rx_data_tx_ack = self.mote.radio.stats["rx_data_tx_ack"]
+        current_traffic = rx_data_tx_ack - self.prev_rx_ack
+        self.prev_rx_ack = rx_data_tx_ack
         return current_traffic
 
     def _compute_average_traffic(self, current_traffic):
@@ -1236,13 +1263,16 @@ class SchedulingFunctionQlearning(SchedulingFunctionBase):
             method = None
         ):
 
-        cells_to_delete = self._get_unused_cells(cell_option)
+        # the agent asked for num_cells cells, so at most that many go, even
+        # when more of them are sitting idle, and never the last one.
+        num_cells = min(
+            num_cells,
+            self._num_cells_that_may_go(preferred_parent, cell_option)
+        )
+        cells_to_delete = self._get_unused_cells(cell_option)[:num_cells]
         self.last_removed_cells_info = copy.deepcopy(cells_to_delete)
-        if num_cells > len(cells_to_delete):
-            num_cells = cells_to_delete
 
         if len(cells_to_delete) >= 1:
-            self.last_removed_cells_info = cells_to_delete
             callback = self._create_delete_request_callback(
                 preferred_parent,
                 len(cells_to_delete),
@@ -1252,7 +1282,7 @@ class SchedulingFunctionQlearning(SchedulingFunctionBase):
                 dstMac      = preferred_parent,
                 command     = d.SIXP_CMD_DELETE,
                 cellOptions = cell_option,
-                numCells    = num_cells,
+                numCells    = len(cells_to_delete),
                 cellList    = cells_to_delete,
                 callback    = callback
             )

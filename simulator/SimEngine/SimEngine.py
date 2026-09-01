@@ -419,8 +419,14 @@ class SimEngine(DiscreteEventEngine):
             md5.update(u'-'.join(context).encode('utf-8'))
             self.random_seed = int(md5.hexdigest(), 16) % sys.maxsize
         else:
+            # An integer is the seed of the batch, not of a single run. Each run
+            # gets that seed plus its run id, so the batch is reproducible and
+            # its runs are still different from one another. Handing the same
+            # seed to every run would turn a batch of ten runs into ten copies
+            # of the same run.
             assert isinstance(self.settings.exec_randomSeed, int)
-            self.random_seed = self.settings.exec_randomSeed
+            run_id = 0 if self.run_id is None else self.run_id
+            self.random_seed = self.settings.exec_randomSeed + run_id
         # apply the random seed; log the seed after self.log is initialized
         random.seed(a=self.random_seed)
 
