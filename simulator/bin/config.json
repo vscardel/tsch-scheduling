@@ -14,7 +14,7 @@
             "conn_simulate_ack_drop": false, 
             "app_burstTimestamp": null, 
             "tsch_tx_queue_size": 5, 
-            "exec_randomSeed": "random", 
+            "exec_randomSeed": 1, 
             "tsch_max_tx_retries": 4, 
             "EPSLON_THRESHOLD": 0.5668780550843178, 
             "rpl_daoPeriod": 60, 
