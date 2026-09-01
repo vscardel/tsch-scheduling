@@ -483,14 +483,21 @@ class SchedulingFunctionQlearning(SchedulingFunctionBase):
         return unused_cells
     
     def _compute_charge(self):
-        self.charge +=  self.mote.radio.stats['idle_listen'] * d.CHARGE_IdleListen_uC
-        self.charge += self.mote.radio.stats['tx_data_rx_ack'] * d.CHARGE_TxDataRxAck_uC
-        self.charge += self.mote.radio.stats['rx_data_tx_ack'] * d.CHARGE_RxDataTxAck_uC
-        self.charge += self.mote.radio.stats['tx_data'] * d.CHARGE_TxData_uC
-        self.charge += self.mote.radio.stats['rx_data'] * d.CHARGE_RxData_uC
-        self.charge += self.mote.radio.stats['sleep'] * d.CHARGE_Sleep_uC
+        # radio.stats are counters that only ever grow, so the total charge is
+        # recomputed from them on every call. Adding into self.charge would add
+        # the whole history again each time.
+        self.charge = (
+            self.mote.radio.stats['idle_listen'] * d.CHARGE_IdleListen_uC +
+            self.mote.radio.stats['tx_data_rx_ack'] * d.CHARGE_TxDataRxAck_uC +
+            self.mote.radio.stats['rx_data_tx_ack'] * d.CHARGE_RxDataTxAck_uC +
+            self.mote.radio.stats['tx_data'] * d.CHARGE_TxData_uC +
+            self.mote.radio.stats['rx_data'] * d.CHARGE_RxData_uC +
+            self.mote.radio.stats['sleep'] * d.CHARGE_Sleep_uC
+        )
+        # the state factor is what was spent since the last call, so what has
+        # to be kept is the total, not the difference
         curr_charge = self.charge - self.old_charge
-        self.old_charge = curr_charge
+        self.old_charge = self.charge
         return curr_charge
     
     def _compute_queue_ratio(self):
@@ -498,8 +505,11 @@ class SchedulingFunctionQlearning(SchedulingFunctionBase):
     
                 
     def _compute_traffic(self):
-        current_traffic = self.mote.radio.stats["rx_data_tx_ack"] - self.prev_rx_ack
-        self.prev_rx_ack = current_traffic
+        # same as _compute_charge: rx_data_tx_ack is a counter that only grows,
+        # so what has to be kept is the counter, not the difference
+        rx_data_tx_ack = self.mote.radio.stats["rx_data_tx_ack"]
+        current_traffic = rx_data_tx_ack - self.prev_rx_ack
+        self.prev_rx_ack = rx_data_tx_ack
         return current_traffic
 
     def _compute_average_traffic(self, current_traffic):
