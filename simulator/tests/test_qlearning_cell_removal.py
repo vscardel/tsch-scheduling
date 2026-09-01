@@ -101,3 +101,61 @@ def test_the_reported_ack_count_is_the_ack_count(agent, monkeypatch):
 
     assert chosen[0]['num_tx'] != chosen[0]['num_tx_ack']
     assert chosen[0]['num_tx_ack'] == 1
+
+
+def test_the_last_dedicated_cell_is_never_removed(agent, monkeypatch):
+    only_cell = StubCell([d.CELLOPTION_TX], num_tx=10, num_tx_ack=1)
+    monkeypatch.setattr(agent.rpl, 'getPreferredParent', lambda: None)
+    monkeypatch.setattr(agent.tsch, 'get_cells', lambda mac, handle: [only_cell])
+
+    sent = []
+    monkeypatch.setattr(agent.sixp, 'send_request', lambda **kw: sent.append(kw))
+
+    agent.sf.sixp_interface_delete(
+        num_cells        = 3,
+        preferred_parent = None,
+        cell_option      = [d.CELLOPTION_TX]
+    )
+
+    assert sent == []
+
+
+def test_no_more_cells_go_than_the_agent_asked_for(agent, monkeypatch):
+    cells = [
+        StubCell([d.CELLOPTION_TX], num_tx=10, num_tx_ack=1) for _ in range(5)
+    ]
+    monkeypatch.setattr(agent.rpl, 'getPreferredParent', lambda: None)
+    monkeypatch.setattr(agent.tsch, 'get_cells', lambda mac, handle: cells)
+
+    sent = []
+    monkeypatch.setattr(agent.sixp, 'send_request', lambda **kw: sent.append(kw))
+
+    agent.sf.sixp_interface_delete(
+        num_cells        = 2,
+        preferred_parent = None,
+        cell_option      = [d.CELLOPTION_TX]
+    )
+
+    assert len(sent) == 1
+    assert sent[0]['numCells'] == 2
+    assert len(sent[0]['cellList']) == 2
+
+
+def test_the_request_never_takes_the_whole_schedule(agent, monkeypatch):
+    # every cell is a candidate and the agent asks for more than there are
+    cells = [
+        StubCell([d.CELLOPTION_TX], num_tx=10, num_tx_ack=0) for _ in range(4)
+    ]
+    monkeypatch.setattr(agent.rpl, 'getPreferredParent', lambda: None)
+    monkeypatch.setattr(agent.tsch, 'get_cells', lambda mac, handle: cells)
+
+    sent = []
+    monkeypatch.setattr(agent.sixp, 'send_request', lambda **kw: sent.append(kw))
+
+    agent.sf.sixp_interface_delete(
+        num_cells        = 10,
+        preferred_parent = None,
+        cell_option      = [d.CELLOPTION_TX]
+    )
+
+    assert len(sent[0]['cellList']) == 3

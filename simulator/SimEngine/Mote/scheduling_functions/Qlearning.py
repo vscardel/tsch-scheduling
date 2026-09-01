@@ -469,6 +469,22 @@ class SchedulingFunctionQlearning(SchedulingFunctionBase):
             return float(cell.num_tx_ack) / cell.num_tx < 0.8
         return cell.num_rx == 0
 
+    def _num_cells_that_may_go(self, preferred_parent, cell_option):
+        """How many cells may be removed without cutting the last dedicated link.
+
+        MSF never deletes the last negotiated cell to the preferred parent, and
+        section 6.3 says insertion and removal otherwise follow the baseline.
+        A mote left with none falls back to its autonomous cell, which it shares
+        with every other child of that parent.
+        """
+        allocated = [
+            cell for cell in self.mote.tsch.get_cells(
+                preferred_parent,
+                self.SLOTFRAME_HANDLE
+            ) if cell.options == cell_option
+        ]
+        return max(0, len(allocated) - 1)
+
     def _get_unused_cells(self,cell_option):
         preferred_parent = self.mote.rpl.getPreferredParent()
         return [
@@ -1246,13 +1262,16 @@ class SchedulingFunctionQlearning(SchedulingFunctionBase):
             method = None
         ):
 
-        cells_to_delete = self._get_unused_cells(cell_option)
+        # the agent asked for num_cells cells, so at most that many go, even
+        # when more of them are sitting idle, and never the last one.
+        num_cells = min(
+            num_cells,
+            self._num_cells_that_may_go(preferred_parent, cell_option)
+        )
+        cells_to_delete = self._get_unused_cells(cell_option)[:num_cells]
         self.last_removed_cells_info = copy.deepcopy(cells_to_delete)
-        if num_cells > len(cells_to_delete):
-            num_cells = cells_to_delete
 
         if len(cells_to_delete) >= 1:
-            self.last_removed_cells_info = cells_to_delete
             callback = self._create_delete_request_callback(
                 preferred_parent,
                 len(cells_to_delete),
@@ -1262,7 +1281,7 @@ class SchedulingFunctionQlearning(SchedulingFunctionBase):
                 dstMac      = preferred_parent,
                 command     = d.SIXP_CMD_DELETE,
                 cellOptions = cell_option,
-                numCells    = num_cells,
+                numCells    = len(cells_to_delete),
                 cellList    = cells_to_delete,
                 callback    = callback
             )
