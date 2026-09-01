@@ -257,3 +257,67 @@ def test_the_terms_are_recorded_for_later(agent, monkeypatch):
     assert sorted(entry) == [
         'energy', 'latency', 'reward', 'throughput', 'utilization'
     ]
+
+
+def test_the_age_of_a_sent_packet_is_kept(agent):
+    sf = agent.sf
+    now = sf.engine.getAsn()
+    slotframe = sf.settings.tsch_slotframeLength
+
+    sf.packet_ages = []
+    sf.indication_tx_cell_elapsed(None, {u'app': {u'timestamp': now - slotframe}})
+
+    assert sf.packet_ages == [slotframe]
+
+
+def test_control_traffic_carries_no_age(agent):
+    sf = agent.sf
+    sf.packet_ages = []
+
+    sf.indication_tx_cell_elapsed(None, None)
+    sf.indication_tx_cell_elapsed(None, {u'type': u'6P'})
+
+    assert sf.packet_ages == []
+
+
+def test_only_the_last_few_packets_are_kept(agent):
+    sf = agent.sf
+    now = sf.engine.getAsn()
+    sf.packet_ages = []
+
+    for _ in range(sf.SLOTFRAME_INTERVAL_SIZE + 5):
+        sf.indication_tx_cell_elapsed(None, {u'app': {u'timestamp': now}})
+
+    assert len(sf.packet_ages) == sf.SLOTFRAME_INTERVAL_SIZE
+
+
+def test_latency_reads_packets_that_went_out_not_only_those_waiting(agent):
+    # a mote sends about one packet every 59 slotframes and decides far more
+    # often than that, so a look at the queue is almost always a look at nothing
+    sf = agent.sf
+    slotframe = sf.settings.tsch_slotframeLength
+    referencia = float(sf.settings.tsch_tx_queue_size * slotframe)
+    del agent.tsch.txQueue[:]
+
+    sf.packet_ages = []
+    assert sf._reward_latency() == 1.0        # nada saiu, nada esperando
+
+    sf.packet_ages = [2 * slotframe]
+    assert sf._reward_latency() == pytest.approx(
+        1.0 - (2 * slotframe) / referencia
+    )
+
+
+def test_a_packet_stuck_in_the_queue_still_counts(agent):
+    sf = agent.sf
+    now = sf.engine.getAsn()
+    slotframe = sf.settings.tsch_slotframeLength
+
+    sf.packet_ages = [0]
+    del agent.tsch.txQueue[:]
+    sem_espera = sf._reward_latency()
+
+    agent.tsch.txQueue.append({u'app': {u'timestamp': now - 4 * slotframe}})
+    com_espera = sf._reward_latency()
+
+    assert com_espera < sem_espera

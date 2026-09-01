@@ -71,6 +71,7 @@ class SchedulingFunctionQlearning(SchedulingFunctionBase):
         self.charge = 0
         self.old_charge = 0
         self.reward_charge = 0
+        self.packet_ages = []
         self.reward_charge_asn = 0
         self.prev_charge = 0
 
@@ -261,6 +262,7 @@ class SchedulingFunctionQlearning(SchedulingFunctionBase):
     def indication_tx_cell_elapsed(self, cell, sent_packet):
         if self.mote.dagRoot:
             return
+        self._record_packet_age(sent_packet)
         # if not self._is_minimal_cell(cell):
         #     # self.TX_CELLS_PASSED = self.TX_CELLS_PASSED + 1
         #     # if bool(sent_packet): 
@@ -667,6 +669,22 @@ class SchedulingFunctionQlearning(SchedulingFunctionBase):
         used = sum(1 for cell in judged if cell.num_tx > 0)
         return used / float(len(judged))
 
+    def _record_packet_age(self, packet):
+        """Keep how long a packet had been alive when it went out.
+
+        Called from the TSCH layer every time a transmit cell carries something.
+        A packet stamped by its source arrives here with the whole delay the
+        path has gathered, which is the same quantity compute_kpis reports.
+        """
+        if not packet:
+            return
+        stamp = packet.get(u'app', {}).get(u'timestamp')
+        if stamp is None:
+            return                     # control traffic carries no stamp
+        self.packet_ages.append(self.engine.getAsn() - stamp)
+        if len(self.packet_ages) > self.SLOTFRAME_INTERVAL_SIZE:
+            self.packet_ages.pop(0)
+
     def _reward_latency(self):
         """How long the packets waiting to be sent have been waiting, in [0, 1].
 
@@ -688,11 +706,12 @@ class SchedulingFunctionQlearning(SchedulingFunctionBase):
         slotframe, which is set by the schedule rather than chosen.
         """
         now = self.engine.getAsn()
-        ages = [
+        waiting = [
             now - packet[u'app'][u'timestamp']
             for packet in self.mote.tsch.txQueue
             if u'app' in packet and u'timestamp' in packet[u'app']
         ]
+        ages = self.packet_ages + waiting
         if not ages:
             return 1.0
         mean_age = sum(ages) / float(len(ages))
