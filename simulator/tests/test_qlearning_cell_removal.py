@@ -5,6 +5,7 @@ Section 6.3 of the paper removes TX cells whose acknowledged fraction is below
 cells at or above 80% and RX cells that had received something, so every removal
 took away the cells that were working. It also divided by num_tx without
 checking it, which raises ZeroDivisionError on a cell that never transmitted.
+A cell that never transmitted has no ratio to be judged by and is left alone.
 
 On top of that, the TX branch was guarded by "cell_option == d.CELLOPTION_TX"
 while every caller passes the list [d.CELLOPTION_TX]. The guard was never true,
@@ -68,13 +69,12 @@ def test_a_cell_exactly_at_the_threshold_is_kept(agent, monkeypatch):
     ) == []
 
 
-def test_a_tx_cell_that_never_transmitted_is_a_candidate(agent, monkeypatch):
-    # this used to raise ZeroDivisionError
+def test_a_tx_cell_that_never_transmitted_is_left_alone(agent, monkeypatch):
+    # nothing to judge it by yet, and dividing by num_tx used to raise
+    # ZeroDivisionError
     never_used = StubCell([d.CELLOPTION_TX], num_tx=0, num_tx_ack=0)
 
-    chosen = candidates(agent, monkeypatch, [never_used], [d.CELLOPTION_TX])
-
-    assert len(chosen) == 1
+    assert candidates(agent, monkeypatch, [never_used], [d.CELLOPTION_TX]) == []
 
 
 def test_rx_cells_that_received_nothing_are_the_candidates(agent, monkeypatch):

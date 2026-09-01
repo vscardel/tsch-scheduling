@@ -455,8 +455,9 @@ class SchedulingFunctionQlearning(SchedulingFunctionBase):
 
         A TX cell is a candidate when less than 80% of its transmissions were
         acknowledged, and an RX cell when nothing was ever received on it. A TX
-        cell that never transmitted has no acknowledgement ratio to speak of and
-        counts as unused, which also keeps num_tx out of a division.
+        cell that has never transmitted has no ratio to judge it by, so it stays
+        until it has been used at least once. That also keeps num_tx out of a
+        division.
         """
         if cell.options != cell_option:
             return False
@@ -465,7 +466,7 @@ class SchedulingFunctionQlearning(SchedulingFunctionBase):
         # string is never true and sends every cell down the RX branch.
         if d.CELLOPTION_TX in cell_option:
             if cell.num_tx == 0:
-                return True
+                return False
             return float(cell.num_tx_ack) / cell.num_tx < 0.8
         return cell.num_rx == 0
 
