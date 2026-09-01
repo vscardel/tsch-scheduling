@@ -450,37 +450,37 @@ class SchedulingFunctionQlearning(SchedulingFunctionBase):
             return list(set(available_slots) - self.locked_slots)
         return []
     
+    def _is_unused_cell(self, cell, cell_option):
+        """Whether a cell is a candidate for removal.
+
+        A TX cell is a candidate when less than 80% of its transmissions were
+        acknowledged, and an RX cell when nothing was ever received on it. A TX
+        cell that never transmitted has no acknowledgement ratio to speak of and
+        counts as unused, which also keeps num_tx out of a division.
+        """
+        if cell.options != cell_option:
+            return False
+        # cell_option arrives as a list, the same shape as cell.options, so it
+        # has to be tested with "in". Comparing it to the bare d.CELLOPTION_TX
+        # string is never true and sends every cell down the RX branch.
+        if d.CELLOPTION_TX in cell_option:
+            if cell.num_tx == 0:
+                return True
+            return float(cell.num_tx_ack) / cell.num_tx < 0.8
+        return cell.num_rx == 0
+
     def _get_unused_cells(self,cell_option):
         preferred_parent = self.mote.rpl.getPreferredParent()
-        complete_cells = []
-        if cell_option == d.CELLOPTION_TX:
-            available_cells = [
-                            {"channelOffset":cell.channel_offset,
-                                "slotOffset":cell.slot_offset,
-                                "num_tx": cell.num_tx,
-                                "num_tx_ack": cell.num_tx} 
-                            for cell in self.mote.tsch.get_cells(
-                            preferred_parent,
-                            self.SLOTFRAME_HANDLE
-                        ) if cell.options == cell_option and float(cell.num_tx_ack )/ cell.num_tx >= 0.8]
-            # and \
-            #         float(cell.num_tx_ack )/ cell.num_tx >= 0.8
-        else:
-            available_cells = [
-                            {"channelOffset":cell.channel_offset,
-                                "slotOffset":cell.slot_offset,
-                                "num_tx": cell.num_tx,
-                                "num_tx_ack": cell.num_tx} 
-                            for cell in self.mote.tsch.get_cells(
-                            preferred_parent,
-                            self.SLOTFRAME_HANDLE
-                        ) if cell.options == cell_option and cell.num_rx > 0]
-            # and \
-            #         cell.num_rx > 0
-        unused_cells = []
-        for cell in available_cells:
-            unused_cells.append(cell)
-        return unused_cells
+        return [
+            {"channelOffset": cell.channel_offset,
+             "slotOffset": cell.slot_offset,
+             "num_tx": cell.num_tx,
+             "num_tx_ack": cell.num_tx_ack}
+            for cell in self.mote.tsch.get_cells(
+                preferred_parent,
+                self.SLOTFRAME_HANDLE
+            ) if self._is_unused_cell(cell, cell_option)
+        ]
     
     def _compute_charge(self):
         # radio.stats are counters that only ever grow, so the total charge is
