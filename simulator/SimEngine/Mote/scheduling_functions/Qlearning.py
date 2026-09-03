@@ -40,13 +40,6 @@ class SchedulingFunctionQlearning(SchedulingFunctionBase):
         self.ALFA = self.settings.ALFA
         self.BETA = self.settings.BETA
         self.EPSLON_DECAY_RATE = self.settings.EPSLON_DECAY_RATE
-        # No longer decides anything. Under epsilon-greedy the chance of
-        # exploring is epsilon itself, and there is no threshold for it to
-        # cross. Kept so existing configurations still load; the Bayesian
-        # search in bin/runExperiments.py still varies it and now searches a
-        # dimension that changes nothing, and section 6.5 of the manuscript
-        # discusses a 0.58 crossing that the method no longer has.
-        self.EPSLON_THRESHOLD = self.settings.EPSLON_THRESHOLD
         self.MIN_EPSLON = self.settings.MIN_EPSLON
         self.SLOTFRAME_INTERVAL_SIZE = self.settings.SLOTFRAME_INTERVAL_SIZE
         self.MAX_TX_CELLS_PASSED = self.settings.MAX_TX_CELLS_PASSED

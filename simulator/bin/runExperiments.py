@@ -26,13 +26,32 @@ def convert_types(obj):
     else:
         return obj
 
-parameters_position = [
-   "ALFA",
-   "BETA",
-   "EPSLON_DECAY_RATE",
-   "MIN_EPSLON",
-   "EPSLON_THRESHOLD"
-]
+# What the Bayesian search varies, and over what range. Q-static still decides
+# whether to explore by comparing epsilon against EPSLON_THRESHOLD, so the
+# threshold is a real parameter for it. DynQ is epsilon-greedy: epsilon is the
+# chance of exploring and there is no threshold to cross, so searching it there
+# would spend evaluations on a dimension that changes nothing.
+SEARCH_SPACE = {
+    'Qlearning': [
+        ("ALFA",              (0.1, 0.9)),
+        ("BETA",              (0.1, 0.9)),
+        ("EPSLON_DECAY_RATE", (0.01, 0.09)),
+        ("MIN_EPSLON",        (0.05, 0.1)),
+    ],
+    'QlearningSBRC24': [
+        ("ALFA",              (0.1, 0.9)),
+        ("BETA",              (0.1, 0.9)),
+        ("EPSLON_DECAY_RATE", (0.01, 0.09)),
+        ("MIN_EPSLON",        (0.05, 0.1)),
+        ("EPSLON_THRESHOLD",  (0.5, 0.7)),
+    ],
+}
+
+def search_space(sched_function):
+    """The names and ranges the search varies for a scheduling function."""
+    return SEARCH_SPACE.get(sched_function, SEARCH_SPACE['QlearningSBRC24'])
+
+parameters_position = []
 
 metrics_vector_position = [
    "latency",
@@ -264,16 +283,17 @@ if __name__ == '__main__':
 
     args = parser.parse_args()
 
+    # which parameters this scheduling function has, and in what order. Both the
+    # minimization and the 2^k path read the order from here.
+    espaco = search_space(args.sched_function)
+    parameters_position[:] = [nome for nome, _ in espaco]
+
     if args.experiment_type == 'minimization':
-        res = gp_minimize(efficience_function,  # The function to minimize
-                        [(0.1, 0.9),  # ALFA
-                        (0.1, 0.9),  # BETA
-                        #    (5,10),     # SLOTFRAME_INTERVAL_SIZE
-                        (0.01, 0.09), # EPSLON_DECAY_RATE
-                        (0.05, 0.1),  # MIN_EPSLON
-                        #    (50, 100),   # MAX_TX_CELLS_PASSED
-                        #    (50, 100),   # MAX_RX_CELLS_PASSED
-                        (0.5, 0.7)],   # EPSLON_THRESHOLD   
+        print('searching {0} parameters: {1}'.format(
+            len(parameters_position), ', '.join(parameters_position)))
+
+        res = gp_minimize(efficience_function,
+                        [faixa for _, faixa in espaco],
                         n_calls=10
                     )
 
