@@ -57,6 +57,7 @@
             "W_UTILIZATION": 1, 
             "W_LATENCY": 1, 
             "W_ENERGY": 1, 
+            "MAX_SLOTFRAMES_BETWEEN_DECISIONS": 50, 
             "LAMBDA": 2
         }, 
         "combination": {
