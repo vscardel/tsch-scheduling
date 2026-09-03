@@ -40,7 +40,6 @@ class SchedulingFunctionQlearning(SchedulingFunctionBase):
         self.ALFA = self.settings.ALFA
         self.BETA = self.settings.BETA
         self.EPSLON_DECAY_RATE = self.settings.EPSLON_DECAY_RATE
-        self.EPSLON_THRESHOLD = self.settings.EPSLON_THRESHOLD
         self.MIN_EPSLON = self.settings.MIN_EPSLON
         self.SLOTFRAME_INTERVAL_SIZE = self.settings.SLOTFRAME_INTERVAL_SIZE
         self.MAX_TX_CELLS_PASSED = self.settings.MAX_TX_CELLS_PASSED
@@ -164,11 +163,18 @@ class SchedulingFunctionQlearning(SchedulingFunctionBase):
 
             current_state = self.compute_next_state(self.settings.factorial_combinations)
 
+            # The functions that discretise also write to the buffers behind
+            # the moving average, so asking twice within one decision moves the
+            # average between the two answers. Everything below works from this
+            # single reading.
+            discrete_state = self.discretize_variables(current_state)
+            state_number = self.map_discrete_state_to_number(discrete_state)
+
             if hasattr(self, 'last_action'):
                 self.compute_q_table(
-                    self.last_state,    # s_t
-                    current_state,      # s_{t+1}
-                    self.last_action ,   # a_t,
+                    self.last_state_number,    # s_t
+                    state_number,              # s_{t+1}
+                    self.last_action,          # a_t
                     op
                 )
 
@@ -182,23 +188,29 @@ class SchedulingFunctionQlearning(SchedulingFunctionBase):
             # print('EPSLON')
             # print(self.EPSLON)
 
-            state_number = self.map_state_to_number(current_state)
-
-            if self.EPSLON < self.EPSLON_THRESHOLD:
-                action = self.return_best_q_action(state_number)
-            else:
+            # 1) epsilon-greedy: epsilon is the chance of exploring on this
+            # decision, not a switch that flips once and stays. Comparing it to
+            # a fixed threshold made a mote draw at random until the threshold
+            # was crossed and then never draw again, and half the motes never
+            # reached the crossing at all.
+            if random.random() < self.EPSLON:
                 action = random.choice([0, 1, 2])
+            else:
+                action = self.return_best_q_action(state_number)
 
 
-            discrete_state = self.discretize_variables(current_state)
-            print(discrete_state)
-
-            num_packets_to_be_generated = \
-                discrete_state.get('queue', 0) + \
-                discrete_state.get('charge', 0) +\
+            # 2) how many cells to move, following the manuscript, but never
+            # zero. N_insert is 0 in the all-zero state and N_remove is 0 in the
+            # all-one state, and in those states, 39% of all decisions, the
+            # matching action does nothing and is indistinguishable from idling.
+            # Two of the three columns of that row can then never be told apart.
+            raised = (
+                discrete_state.get('queue', 0) +
+                discrete_state.get('charge', 0) +
                 discrete_state.get('traffic', 0)
-
-            num_packets_to_remove = len(discrete_state) - num_packets_to_be_generated
+            )
+            num_packets_to_be_generated = max(1, raised)
+            num_packets_to_remove = max(1, len(discrete_state) - raised)
 
 
             if action == 0 and num_packets_to_be_generated > 0:
@@ -214,7 +226,7 @@ class SchedulingFunctionQlearning(SchedulingFunctionBase):
                     cell_option=cellopt,
                 )
 
-            self.last_state = current_state
+            self.last_state_number = state_number
             self.last_action = action
 
 
@@ -792,13 +804,22 @@ class SchedulingFunctionQlearning(SchedulingFunctionBase):
             discrete_state[factor_name] = discrete_factor
         return discrete_state
 
-    def map_state_to_number(self, state):
-        discrete_state = self.discretize_variables(state)
-        # print(discrete_state)
+    def map_discrete_state_to_number(self, discrete_state):
+        """The row of the Q-table for an already discretised state."""
         binary_number = ''
-        for key,value in discrete_state.items():
-            binary_number += str(value) 
-        return int(binary_number,2)
+        for key, value in discrete_state.items():
+            binary_number += str(value)
+        return int(binary_number, 2)
+
+    def map_state_to_number(self, state):
+        """Discretise a raw state and give its row.
+
+        This writes to the moving average buffers, so a decision should call it
+        once and keep the answer.
+        """
+        return self.map_discrete_state_to_number(
+            self.discretize_variables(state)
+        )
     
     def return_best_q_value(self,state):
        current_vector = self.Q_table[state]
@@ -808,9 +829,10 @@ class SchedulingFunctionQlearning(SchedulingFunctionBase):
         current_vector = self.Q_table[state]
         return np.argmax(current_vector)
     
-    def compute_q_table(self, state, next_state, action, op):
-        curr_state_number = self.map_state_to_number(state)
-        next_state_number = self.map_state_to_number(next_state)
+    def compute_q_table(self, curr_state_number, next_state_number, action, op):
+        # the caller has already discretised, once, and passes the row numbers.
+        # Discretising again here would write to the moving average buffers a
+        # second and third time for the same decision.
 
         # Compute reward
         reward = self.compute_reward()
