@@ -53,6 +53,13 @@ class SchedulingFunctionQlearning(SchedulingFunctionBase):
         self.ACTION_STATE_SIZE = self.settings.ACTION_STATE_SIZE
         self.LAMBDA = self.settings.LAMBDA
 
+        # How long the agent may go without deciding. The event driven trigger
+        # stays in charge; this only stops a mote from falling silent forever
+        # when its own choice is to change nothing.
+        self.MAX_SLOTFRAMES_BETWEEN_DECISIONS = getattr(
+            self.settings, 'MAX_SLOTFRAMES_BETWEEN_DECISIONS', 50
+        )
+
         # Reward weights. The four terms are all shares of something, so equal
         # weights are the neutral starting point and need no justification
         # beyond that. A configuration may override any of them, which is what
@@ -71,6 +78,7 @@ class SchedulingFunctionQlearning(SchedulingFunctionBase):
         self.old_charge = 0
         self.reward_charge = 0
         self.packet_ages = []
+        self.slotframes_since_decision = 0
         self.reward_charge_asn = 0
         self.prev_charge = 0
 
@@ -150,8 +158,43 @@ class SchedulingFunctionQlearning(SchedulingFunctionBase):
 
     #indicates the ending of a window of X slotframes
     #X = SimEngine.SLOTFRAME_PERIOD_SIZE
-    def indication_slotframe_window_ending(self,slotframe_period_size):
-        pass
+    def indication_slotframe_window_ending(self, slotframe_period_size):
+        """A slotframe has ended. Decide anyway if nothing has forced a decision.
+
+        A decision is otherwise only triggered by a cell being added or removed,
+        which is the output of the policy. If the agent idles, or picks the
+        action that moves no cell, nothing changes, no event fires, and the mote
+        never decides again. Measured, 63% of motes ended on an action with no
+        effect against 49% expected, p=4e-06, and ten times the run length
+        bought only three times the episodes.
+
+        The event stays the main trigger, which is the tight feedback loop
+        section 6.3 argues for. This is a floor under it, not a replacement.
+        """
+        if self.mote.dagRoot:
+            return
+
+        self.slotframes_since_decision += slotframe_period_size
+        if self.slotframes_since_decision < self.MAX_SLOTFRAMES_BETWEEN_DECISIONS:
+            return
+
+        preferred_parent = self.mote.rpl.getPreferredParent()
+        if preferred_parent is None:
+            return
+        if self._sixp_busy_with(preferred_parent):
+            # a request is already in flight, and 6P allows one at a time. The
+            # cell being negotiated will trigger a decision on its own.
+            return
+
+        self.adapt_to_traffic([d.CELLOPTION_TX], None, 'timer')
+
+    def _sixp_busy_with(self, neighbor):
+        """Whether a 6P transaction with this neighbour is already under way."""
+        mine = self.mote.get_mac_addr()
+        for key in self.mote.sixp.transaction_table:
+            if mine in key and neighbor in key:
+                return True
+        return False
 
 
     def adapt_to_traffic(self, cellopt, cell, op):
@@ -226,6 +269,7 @@ class SchedulingFunctionQlearning(SchedulingFunctionBase):
                     cell_option=cellopt,
                 )
 
+            self.slotframes_since_decision = 0
             self.last_state_number = state_number
             self.last_action = action
 
