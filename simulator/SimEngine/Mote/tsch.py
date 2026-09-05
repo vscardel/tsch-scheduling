@@ -21,6 +21,7 @@ from . import MoteDefines as d
 from SimEngine.Mote.scheduling_functions.MSF import SchedulingFunctionMSF
 from SimEngine.Mote.scheduling_functions.Qlearning import SchedulingFunctionQlearning
 from SimEngine.Mote.scheduling_functions.QlearningSBRC24 import SchedulingFunctionQlearningSBRC24
+from SimEngine.Mote.scheduling_functions.RLSF import SchedulingFunctionRLSF
 from SimEngine.Mote.scheduling_functions.EMSF import SchedulingFunctionEMSF
 
 # Simulator-wide modules
@@ -397,10 +398,13 @@ class Tsch(object):
             )
 
             if (
-                isinstance(self.mote.sf, SchedulingFunctionQlearning) or 
-                isinstance(self.mote.sf, SchedulingFunctionQlearningSBRC24)
+                isinstance(self.mote.sf, SchedulingFunctionQlearning) or
+                isinstance(self.mote.sf, SchedulingFunctionQlearningSBRC24) or
+                # RL-SF scores a slotframe partly on whether it dropped, the
+                # PD term of its Eq. 3, so it has to hear about the overflow
+                isinstance(self.mote.sf, SchedulingFunctionRLSF)
             ):
-                self.mote.sf.indication_queue_full()   
+                self.mote.sf.indication_queue_full()
 
             # couldn't enqueue
             goOn = False
