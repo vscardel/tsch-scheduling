@@ -45,11 +45,45 @@ SEARCH_SPACE = {
         ("MIN_EPSLON",        (0.05, 0.1)),
         ("EPSLON_THRESHOLD",  (0.5, 0.7)),
     ],
+    # RL-SF gets the same budget and the same number of dimensions as DynQ, so
+    # neither method is the only one that was tuned. Its three reward weights
+    # are left out for the same reason DynQ's are: searching the reward changes
+    # what the agent is being asked to do, not how well it does it.
+    'RLSF': [
+        ("RLSF_ALFA",          (0.1, 0.9)),
+        ("RLSF_BETA",          (0.1, 0.9)),
+        ("RLSF_EPSILON_DECAY", (0.99, 0.9999)),
+        ("RLSF_EPSILON_END",   (0.05, 0.2)),
+    ],
 }
 
 def search_space(sched_function):
     """The names and ranges the search varies for a scheduling function."""
     return SEARCH_SPACE.get(sched_function, SEARCH_SPACE['QlearningSBRC24'])
+
+
+DEFAULT_NUM_EVALUATIONS   = 40
+DEFAULT_NUM_RANDOM_STARTS = 10
+
+
+def optimisation_budget(num_evaluations, num_random_starts):
+    """How many evaluations the search gets, and how many of those are random.
+
+    skopt samples at random for its first n_random_starts evaluations and only
+    then fits the surrogate. If n_calls equals that number every evaluation is
+    a draw, and the search is a random search wearing the name of Bayesian
+    optimisation. Returns the pair, or raises if the budget buys no guided
+    evaluation at all.
+    """
+    n_random_starts = num_random_starts or DEFAULT_NUM_RANDOM_STARTS
+    n_calls = num_evaluations or DEFAULT_NUM_EVALUATIONS
+    if n_calls <= n_random_starts:
+        raise ValueError(
+            'n_calls ({0}) must exceed n_random_starts ({1}), otherwise no '
+            'evaluation is guided by the model and this is a random '
+            'search.'.format(n_calls, n_random_starts)
+        )
+    return n_calls, n_random_starts
 
 parameters_position = []
 
@@ -269,6 +303,7 @@ if __name__ == '__main__':
     parser.add_argument('-af','--aquisition_function', type=str, help='The aquisition function used in gp_minimize', required=False)
     parser.add_argument('-sr','--sync_required', type=bool, help='if sync info is obtained in simulation', required=False)
     parser.add_argument('-nrs','--num_random_starts', type=int, help='num random starts of gp.minimize', required=False)
+    parser.add_argument('-rs','--random_state', type=int, default=1, help='seed of the search itself, so the optimisation reproduces', required=False)
     parser.add_argument('-cc','--conn_class', type=str, help='connectivity_matrix', required=True)
     parser.add_argument('-nslots','--num_slots', type=int, help='number of slotframes (time) of simulation', required=True)
     parser.add_argument('-is_min','--experiment_type', type=str, help='determines the time of experiment (minimization or 2^k)', required=True)
@@ -292,9 +327,21 @@ if __name__ == '__main__':
         print('searching {0} parameters: {1}'.format(
             len(parameters_position), ', '.join(parameters_position)))
 
+        try:
+            n_calls, n_random_starts = optimisation_budget(
+                args.num_evaluations, args.num_random_starts
+            )
+        except ValueError as erro:
+            raise SystemExit(str(erro))
+        print('{0} evaluations, {1} of them random, {2} guided'.format(
+            n_calls, n_random_starts, n_calls - n_random_starts))
+
         res = gp_minimize(efficience_function,
                         [faixa for _, faixa in espaco],
-                        n_calls=10
+                        n_calls          = n_calls,
+                        n_random_starts  = n_random_starts,
+                        acq_func         = args.aquisition_function or 'gp_hedge',
+                        random_state     = args.random_state,
                     )
 
         time.sleep(30)

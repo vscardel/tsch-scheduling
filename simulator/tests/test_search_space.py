@@ -48,3 +48,42 @@ def test_every_range_is_a_pair_of_bounds():
 def test_an_unknown_function_gets_the_full_space():
     # nao vale calar a dimensao para quem nao sabemos como decide
     assert nomes('SomethingElse') == nomes('QlearningSBRC24')
+
+
+def test_rlsf_has_the_same_number_of_dimensions_as_dynq():
+    """Neither method should be the only one that was tuned."""
+    assert len(nomes('RLSF')) == len(nomes('Qlearning'))
+
+
+def test_rlsf_searches_its_own_settings():
+    """The names go straight into the config, so they must match RLSF.py."""
+    assert nomes('RLSF') == [
+        'RLSF_ALFA', 'RLSF_BETA', 'RLSF_EPSILON_DECAY', 'RLSF_EPSILON_END'
+    ]
+
+
+def test_no_search_touches_the_reward_weights():
+    """Searching the reward changes the question, not the answer."""
+    for sf in ('Qlearning', 'QlearningSBRC24', 'RLSF'):
+        for nome in nomes(sf):
+            assert not nome.startswith('W_')
+            assert 'THETA' not in nome
+
+
+def test_budget_defaults_leave_most_evaluations_to_the_model():
+    n_calls, n_random = rx.optimisation_budget(None, None)
+    assert n_calls > n_random
+    assert n_calls - n_random >= 2 * n_random
+
+
+def test_budget_refuses_a_pure_random_search():
+    """n_calls equal to n_random_starts is what the published run did."""
+    import pytest
+    with pytest.raises(ValueError):
+        rx.optimisation_budget(10, 10)
+    with pytest.raises(ValueError):
+        rx.optimisation_budget(5, 10)
+
+
+def test_budget_honours_what_is_asked_for():
+    assert rx.optimisation_budget(30, 8) == (30, 8)
