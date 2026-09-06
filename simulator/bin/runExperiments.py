@@ -31,29 +31,41 @@ def convert_types(obj):
 # threshold is a real parameter for it. DynQ is epsilon-greedy: epsilon is the
 # chance of exploring and there is no threshold to cross, so searching it there
 # would spend evaluations on a dimension that changes nothing.
+# The ranges are wider than the ones the submitted results came from. A first
+# pass over them put the full DynQ at ALFA 0.9 and EPSLON_DECAY_RATE 0.09, both
+# sitting exactly on their old upper bound, with a third configuration close
+# behind on ALFA and three of four near the cap on the decay. An optimum on the
+# edge of the box is the box talking, not the method, and it would have gone
+# into the hyperparameter table for a reviewer to notice.
+#
+# The old bounds were inherited from the version that still had
+# EPSLON_THRESHOLD, where the decay governed how long until the switch flipped.
+# Under epsilon-greedy the decay governs how long the agent keeps drawing at
+# random, and wanting to leave that phase sooner is a reasonable thing for it
+# to want.
 SEARCH_SPACE = {
     'Qlearning': [
-        ("ALFA",              (0.1, 0.9)),
-        ("BETA",              (0.1, 0.9)),
-        ("EPSLON_DECAY_RATE", (0.01, 0.09)),
-        ("MIN_EPSLON",        (0.05, 0.1)),
+        ("ALFA",              (0.05, 0.99)),
+        ("BETA",              (0.05, 0.99)),
+        ("EPSLON_DECAY_RATE", (0.005, 0.30)),
+        ("MIN_EPSLON",        (0.01, 0.30)),
     ],
     'QlearningSBRC24': [
-        ("ALFA",              (0.1, 0.9)),
-        ("BETA",              (0.1, 0.9)),
-        ("EPSLON_DECAY_RATE", (0.01, 0.09)),
-        ("MIN_EPSLON",        (0.05, 0.1)),
-        ("EPSLON_THRESHOLD",  (0.5, 0.7)),
+        ("ALFA",              (0.05, 0.99)),
+        ("BETA",              (0.05, 0.99)),
+        ("EPSLON_DECAY_RATE", (0.005, 0.30)),
+        ("MIN_EPSLON",        (0.01, 0.30)),
+        ("EPSLON_THRESHOLD",  (0.30, 0.90)),
     ],
     # RL-SF gets the same budget and the same number of dimensions as DynQ, so
     # neither method is the only one that was tuned. Its three reward weights
     # are left out for the same reason DynQ's are: searching the reward changes
     # what the agent is being asked to do, not how well it does it.
     'RLSF': [
-        ("RLSF_ALFA",          (0.1, 0.9)),
-        ("RLSF_BETA",          (0.1, 0.9)),
-        ("RLSF_EPSILON_DECAY", (0.99, 0.9999)),
-        ("RLSF_EPSILON_END",   (0.05, 0.2)),
+        ("RLSF_ALFA",          (0.05, 0.99)),
+        ("RLSF_BETA",          (0.05, 0.99)),
+        ("RLSF_EPSILON_DECAY", (0.95, 0.9999)),
+        ("RLSF_EPSILON_END",   (0.01, 0.30)),
     ],
 }
 

@@ -87,3 +87,35 @@ def test_budget_refuses_a_pure_random_search():
 
 def test_budget_honours_what_is_asked_for():
     assert rx.optimisation_budget(30, 8) == (30, 8)
+
+
+# what a first pass over the old, narrower box returned; two of these sat
+# exactly on their upper bound, which is the box talking and not the method
+OTIMOS_DA_CAIXA_ANTIGA = {
+    'ALFA': 0.9,
+    'BETA': 0.5625998437793637,
+    'EPSLON_DECAY_RATE': 0.09,
+    'MIN_EPSLON': 0.09002897521343009,
+}
+
+
+def test_the_old_optima_are_no_longer_on_a_bound():
+    faixas = dict(rx.search_space('Qlearning'))
+    for nome, valor in OTIMOS_DA_CAIXA_ANTIGA.items():
+        baixo, alto = faixas[nome]
+        assert baixo < valor < alto, (
+            '{0}={1} still sits on the edge of [{2}, {3}]'.format(
+                nome, valor, baixo, alto)
+        )
+
+
+def test_the_learners_share_the_ranges_they_have_in_common():
+    """Neither method may search a wider box than the other."""
+    dynq = dict(rx.search_space('Qlearning'))
+    static = dict(rx.search_space('QlearningSBRC24'))
+    for nome in dynq:
+        assert dynq[nome] == static[nome]
+
+    rlsf = dict(rx.search_space('RLSF'))
+    assert rlsf['RLSF_ALFA'] == dynq['ALFA']
+    assert rlsf['RLSF_BETA'] == dynq['BETA']
