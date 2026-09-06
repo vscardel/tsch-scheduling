@@ -64,6 +64,11 @@ class SchedulingFunctionQlearning(SchedulingFunctionBase):
         # weights are the neutral starting point and need no justification
         # beyond that. A configuration may override any of them, which is what
         # a sensitivity analysis varies.
+        # off runs the ablation: cells go at random, the way the stock
+        # simulator picks them, instead of by utilisation
+        self.SMART_CELL_REMOVAL = getattr(
+            self.settings, 'SMART_CELL_REMOVAL', True)
+
         self.W_THROUGHPUT  = getattr(self.settings, 'W_THROUGHPUT', 1.0)
         self.W_UTILIZATION = getattr(self.settings, 'W_UTILIZATION', 1.0)
         self.W_LATENCY     = getattr(self.settings, 'W_LATENCY', 1.0)
@@ -556,17 +561,43 @@ class SchedulingFunctionQlearning(SchedulingFunctionBase):
         ]
         return max(0, len(allocated) - 1)
 
-    def _get_unused_cells(self,cell_option):
+    def _get_unused_cells(self, cell_option):
+        """The cells that may go, best candidate first.
+
+        With SMART_CELL_REMOVAL off this falls back to what the stock simulator
+        does, which is to pick at random among the allocated cells. That is the
+        ablation a reviewer asked for: the removal rule is called a hard-coded
+        heuristic doing the agent's job, and the only way to say how much of
+        DynQ's result comes from the rule rather than from the learning is to
+        run it both ways.
+
+        The floor of one cell is not part of the rule and stays in both arms.
+        It lives in _num_cells_that_may_go, MSF has the same, and without it a
+        mote can talk itself into silence.
+        """
         preferred_parent = self.mote.rpl.getPreferredParent()
+        cells = [
+            cell for cell in self.mote.tsch.get_cells(
+                preferred_parent,
+                self.SLOTFRAME_HANDLE
+            ) if cell.options == cell_option
+        ]
+
+        if self.SMART_CELL_REMOVAL:
+            cells = [
+                cell for cell in cells
+                if self._is_unused_cell(cell, cell_option)
+            ]
+        else:
+            cells = list(cells)
+            random.shuffle(cells)
+
         return [
             {"channelOffset": cell.channel_offset,
              "slotOffset": cell.slot_offset,
              "num_tx": cell.num_tx,
              "num_tx_ack": cell.num_tx_ack}
-            for cell in self.mote.tsch.get_cells(
-                preferred_parent,
-                self.SLOTFRAME_HANDLE
-            ) if self._is_unused_cell(cell, cell_option)
+            for cell in cells
         ]
     
     def _total_charge(self):
