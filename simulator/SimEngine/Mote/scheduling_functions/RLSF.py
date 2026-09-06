@@ -11,47 +11,18 @@ from .MSF import SchedulingFunctionMSF
 
 
 class SchedulingFunctionRLSF(SchedulingFunctionMSF):
-    """RL-SF, from Pratama and Chung, ICEIEC 2022, doi 10.1109/ICEIEC54567.2022.9835090.
+    """RL-SF, Pratama and Chung, ICEIEC 2022, doi 10.1109/ICEIEC54567.2022.9835090.
 
-    At the start of every slotframe the node reads one number, how many
-    messages are waiting in its queue, and picks from the action space how many
-    negotiated TX cells it should hold towards its preferred parent for that
-    slotframe. The action is the cell count itself, not a change to it, so 6P
-    adds or deletes whatever the difference from the previous slotframe is.
-    Over the slotframe the node then scores that choice on how full the queue
-    stayed, how many of its cells went unused, and whether it dropped a packet.
+    The state is the number of queued messages. The action is the TX cell count
+    for the coming slotframe, not a change to it, so 6P negotiates the gap.
 
-    It is built on MSF because the paper runs on MSF (its Table I) and replaces
-    only the decision, leaving the 6P negotiation, the autonomous cells and the
-    collision housekeeping alone. Overriding _adapt_to_traffic to do nothing is
-    what takes MSF's threshold rule out of the way. Everything below the
-    decision is inherited, so RL-SF negotiates cells exactly as MSF and EMSF
-    do, and in particular it removes cells the way the stock simulator does.
-    The utilisation-aware removal is DynQ's own, and letting RL-SF borrow it
-    would compare DynQ against DynQ's idea wearing someone else's state.
+    Built on MSF, which is what the paper runs on, with MSF's threshold rule
+    disabled by _adapt_to_traffic below. It therefore removes cells the stock
+    way: DynQ's utilisation-aware removal is deliberately not inherited, so the
+    baseline does not borrow the idea it is being compared against.
 
-    Four things the paper does not state, chosen here and exposed as settings
-    so the choice can be argued or changed rather than buried:
-
-    1. The reward weights theta1, theta2 and theta3 of its Eq. 3. Equal weights
-       of 1.0 are the default, which is the only neutral reading.
-    2. The decay rate of Eq. 8. The paper gives the endpoints, 0.8 down to 0.1,
-       and says the exponential schedule beat the constant one, but not the
-       rate. The default reaches the floor in about a thousand decisions, which
-       is a fifth of the 5000-slotframe run the paper reports.
-    3. The size of the Q-table. Figure 1 of the paper draws eight rows and
-       eight columns, so eight queue levels and eight cell counts, while its
-       Table I sets the TSCH queue to fifteen. Eight is taken from the figure
-       and the queue occupancy saturates there.
-    4. Which drops count. The paper says "a packet drop in the current
-       slotframe" and motivates the whole method by queue growth, so this
-       counts drops from a full TX queue.
-
-    One place the paper is followed in spirit rather than to the letter: its
-    Eq. 1 and Eq. 2 together read Q <- (1-a)Q + a[(r + B maxQ') - Q], which
-    subtracts the old value twice and is not Q-learning. The standard update is
-    used instead, which is plainly what Eq. 1 and Eq. 2 are reaching for.
-    Implementing the typo would have handed us a baseline that cannot learn.
+    Where the paper is silent, the defaults below say so and _update_q_table
+    explains the one equation not followed to the letter.
     """
 
     # the paper's own figures, kept here rather than in the config so a run
@@ -60,12 +31,19 @@ class SchedulingFunctionRLSF(SchedulingFunctionMSF):
     DEFAULT_BETA           = 0.95    # discount factor, section IV.B
     DEFAULT_EPSILON_INIT   = 0.8     # section IV.B
     DEFAULT_EPSILON_END    = 0.1     # section IV.B
-    DEFAULT_EPSILON_DECAY  = 0.998   # not stated, see the note above
-    DEFAULT_THETA_QUEUE    = 1.0     # theta1 of Eq. 3, not stated
-    DEFAULT_THETA_UNUSED   = 1.0     # theta2 of Eq. 3, not stated
-    DEFAULT_THETA_DROP     = 1.0     # theta3 of Eq. 3, not stated
-    DEFAULT_NUM_QUEUE_STATES = 8     # rows of Figure 1
-    DEFAULT_MAX_CELLS        = 8     # columns of Figure 1
+    # not stated by the paper, which gives only the endpoints of Eq. 8;
+    # this reaches the floor in about a thousand decisions, a fifth of the
+    # 5000-slotframe run it reports
+    DEFAULT_EPSILON_DECAY  = 0.998
+    # the three weights of Eq. 3 are not stated either; equal weights are
+    # the only neutral reading
+    DEFAULT_THETA_QUEUE    = 1.0     # theta1 of Eq. 3
+    DEFAULT_THETA_UNUSED   = 1.0     # theta2 of Eq. 3
+    DEFAULT_THETA_DROP     = 1.0     # theta3 of Eq. 3
+    # Figure 1 draws eight rows and eight columns, while Table I sets the
+    # TSCH queue to fifteen; the figure wins and the queue saturates
+    DEFAULT_NUM_QUEUE_STATES = 8
+    DEFAULT_MAX_CELLS        = 8
 
     def __init__(self, mote):
         super(SchedulingFunctionRLSF, self).__init__(mote)
@@ -196,7 +174,12 @@ class SchedulingFunctionRLSF(SchedulingFunctionMSF):
         )
 
     def _update_q_table(self, state, action, reward, next_state):
-        """Q <- (1-a)Q + a(r + B max Q'), the standard update. See the note above."""
+        """Q <- (1-a)Q + a(r + B max Q'), the standard update.
+
+        The paper's Eq. 1 and Eq. 2 together read (1-a)Q + a[(r + B maxQ') - Q],
+        which subtracts the old value twice and is not Q-learning. Implementing
+        that would have handed us a baseline that cannot learn.
+        """
         target = reward + self.BETA * max(self.q_table[next_state])
         self.q_table[state][action] = (
             (1 - self.ALFA) * self.q_table[state][action] +
