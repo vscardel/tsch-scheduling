@@ -149,7 +149,6 @@ class SchedulingFunctionQlearningSBRC24(SchedulingFunctionBase):
 
                 self.num_packets_in_current_episode = 0
 
-                print(next_state)
                 is_random = False
                 if self.EPSLON < self.EPSLON_THRESHOLD:
                     action = self.return_best_q_action(self.map_state_to_number(self.current_state))
@@ -165,10 +164,6 @@ class SchedulingFunctionQlearningSBRC24(SchedulingFunctionBase):
                 add_cells =  (discrete_queue) + (discrete_traffic) + (discrete_energy_left)  
                 remove_cells =  (1-discrete_queue) + (1-discrete_traffic) + (1-discrete_energy_left)  
                 
-                print('EPSLON')
-                print(self.EPSLON)
-                print('action')
-                print(action)
 
                 if action == 0:
                     self.sixp_interface_add(
@@ -402,14 +397,12 @@ class SchedulingFunctionQlearningSBRC24(SchedulingFunctionBase):
 
     def discretize_queue_ratio(self,queue_ratio):
         average_queue_ratio = self._compute_queue_average_ratio(queue_ratio)
-        print(average_queue_ratio)
         if queue_ratio >= 0.12:
             return 1
         return 0
     
     def discretize_traffic(self,traffic):
         average_traffic = self._compute_average_traffic(traffic)
-        print(average_traffic)
         if traffic >= 3:
             return 1
         return 0
