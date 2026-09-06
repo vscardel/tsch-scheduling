@@ -58,6 +58,12 @@ def init_mote():
         'charge': None,
         'lifetime_AA_years': None,
         'avg_current_uA': None,
+        # 6P control traffic. A reviewer asked for transaction counts and
+        # control-packet overhead alongside the energy and lifetime figures,
+        # since a scheduler that renegotiates often pays for it there.
+        'sixp_num_tx': 0,
+        'sixp_num_transactions': 0,
+        'sixp_num_timeouts': 0,
     }
 
 # =========================== KPIs ============================================
@@ -160,6 +166,19 @@ def kpis_all(inputfile):
             )
             allstats[run_id][mote_id]['upstream_pkts'][appcounter]['rx_asn'] = asn
 
+        elif logline['_type'] == SimLog.LOG_SIXP_TX['type']:
+            # one 6P control packet left this mote
+            if mote_id in allstats[run_id]:
+                allstats[run_id][mote_id]['sixp_num_tx'] += 1
+
+        elif logline['_type'] == SimLog.LOG_SIXP_TRANSACTION_COMPLETED['type']:
+            if mote_id in allstats[run_id]:
+                allstats[run_id][mote_id]['sixp_num_transactions'] += 1
+
+        elif logline['_type'] == SimLog.LOG_SIXP_TRANSACTION_TIMEOUT['type']:
+            if mote_id in allstats[run_id]:
+                allstats[run_id][mote_id]['sixp_num_timeouts'] += 1
+
         elif logline['_type'] == SimLog.LOG_RADIO_STATS['type']:
             # shorthands
             mote_id    = logline['_mote_id']
@@ -226,6 +245,9 @@ def kpis_all(inputfile):
         us_latencies = []
         current_consumed = []
         lifetimes = []
+        sixp_packets = 0
+        sixp_transactions = 0
+        sixp_timeouts = 0
         slot_duration = file_settings['tsch_slotDuration']
 
         #-- compute stats
@@ -239,6 +261,10 @@ def kpis_all(inputfile):
             app_packets_sent += motestats['upstream_num_tx']
             app_packets_received += motestats['upstream_num_rx']
             app_packets_lost += motestats['upstream_num_lost']
+
+            sixp_packets += motestats['sixp_num_tx']
+            sixp_transactions += motestats['sixp_num_transactions']
+            sixp_timeouts += motestats['sixp_num_timeouts']
 
             # joining times
 
@@ -261,6 +287,30 @@ def kpis_all(inputfile):
         #-- save stats
 
         allstats[run_id]['global-stats'] = {
+            'sixp-overhead': [
+                {
+                    'name': '6P Control Packets',
+                    'unit': 'packets',
+                    'total': sixp_packets,
+                    # what the control traffic costs per delivered application
+                    # packet, which is the form that can be read against the
+                    # energy and lifetime figures
+                    'per_app_packet': (
+                        sixp_packets / app_packets_sent
+                        if app_packets_sent > 0 else 'N/A'
+                    )
+                },
+                {
+                    'name': '6P Transactions Completed',
+                    'unit': 'transactions',
+                    'total': sixp_transactions
+                },
+                {
+                    'name': '6P Transactions Timed Out',
+                    'unit': 'transactions',
+                    'total': sixp_timeouts
+                }
+            ],
             'e2e-upstream-delivery': [
                 {
                     'name': 'E2E Upstream Delivery Ratio',
