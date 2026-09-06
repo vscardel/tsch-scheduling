@@ -100,8 +100,20 @@ class SchedulingFunctionRLSF(SchedulingFunctionMSF):
         if self.mote.dagRoot:
             return
 
+        # This fires for every mote on every slotframe, including motes whose
+        # scheduling function has not started yet and motes that desynchronised
+        # and had stop() uninstall their slotframes. MSF never notices because
+        # its own hook here does nothing. Without the schedule there is nothing
+        # to negotiate against, and last_state is dropped so the next decision
+        # does not credit a reward earned across the gap.
+        if self.mote.tsch.get_slotframe(
+                self.SLOTFRAME_HANDLE_NEGOTIATED_CELLS) is None:
+            self.last_state = None
+            return
+
         preferred_parent = self.mote.rpl.getPreferredParent()
         if preferred_parent is None:
+            self.last_state = None
             return
 
         state = self._observe_state()
@@ -137,6 +149,21 @@ class SchedulingFunctionRLSF(SchedulingFunctionMSF):
                 self.cells_used += 1
         super(SchedulingFunctionRLSF, self).indication_tx_cell_elapsed(
             cell, sent_packet
+        )
+
+    def indication_rx_cell_elapsed(self, cell, received_packet):
+        """Treat a packet that has been emptied as no packet at all.
+
+        mote.drop_packet deletes every key from the packet it drops, so what
+        arrives here can be {}. MSF guards for None and then reads
+        received_packet['mac'], and {} is not None. Both readings agree that
+        nothing usable arrived, and bool({}) is already False, so normalising
+        to None keeps MSF's own "was the cell used" answer unchanged.
+        """
+        if received_packet is not None and u'mac' not in received_packet:
+            received_packet = None
+        super(SchedulingFunctionRLSF, self).indication_rx_cell_elapsed(
+            cell, received_packet
         )
 
     def indication_queue_full(self):
@@ -262,6 +289,33 @@ class SchedulingFunctionRLSF(SchedulingFunctionMSF):
                 num_cells    = current - target,
                 cell_options = self.TX_CELL_OPT
             )
+
+    def _request_deleting_cells(self, neighbor, num_cells, cell_options):
+        """Delete, unless there is nothing left to delete.
+
+        MSF asserts that the cell list it is about to advertise is not empty.
+        Its own retry path can break that: a DELETE that times out is reissued
+        from the timeout callback with the original count, and by then the
+        cells may already be gone. MSF deletes one cell at a time and only when
+        it holds more than one, so it practically never reaches the case; RL-SF
+        renegotiates every slotframe and reaches it within minutes.
+
+        This bails the way MSF's own add path bails when the schedule is full,
+        releasing the retry counter so the neighbour does not stay marked busy
+        for the rest of the run.
+        """
+        occupied = [
+            cell for cell in self.mote.tsch.get_cells(
+                neighbor, self.SLOTFRAME_HANDLE_NEGOTIATED_CELLS
+            ) if cell.options == cell_options
+        ]
+        if not occupied:
+            self.retry_count[neighbor] = -1
+            return
+
+        super(SchedulingFunctionRLSF, self)._request_deleting_cells(
+            neighbor, num_cells, cell_options
+        )
 
     def _record_decision(self, state, action, target, current):
         self.decision_count += 1
