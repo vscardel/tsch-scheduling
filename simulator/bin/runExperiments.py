@@ -1,6 +1,7 @@
 import argparse
 import json
 import os
+import glob
 import shutil
 import random
 import itertools
@@ -217,21 +218,28 @@ def save_curr_run_config(config_name, settings):
         json.dump(settings, f, indent=4)
 
 def load_kpis(folder_path, num_motes):
-    kpis = None
-    for tentativa in range(3):
+    """Every run's KPIs, merged and keyed by run id.
+
+    This used to open output_cpu0.dat.kpi and nothing else. runSim gives each
+    core its own output file, so with N cores it read one run and silently
+    discarded the other N-1: the score that drove the optimisation and the
+    factorial analysis was computed from a single run while the config asked
+    for ten, and the runs that cost the most time were the ones thrown away.
+
+    It also explains why every experiment so far had to be pinned to one core
+    to be trustworthy, which is the slowest way to run any of them.
+    """
+    kpis = {}
+    arquivos = sorted(glob.glob(os.path.join(folder_path, '*.dat.kpi')))
+    for caminho in arquivos:
         try:
-            with open(
-                os.path.join(
-                    folder_path,
-                    'output_cpu0.dat.kpi'.format(num_motes)
-                )
-            , 'r') as f:
-                json_string = f.read()
-                kpis = json.loads(json_string)
+            with open(caminho, 'r') as f:
+                for run_id, run in json.loads(f.read()).items():
+                    kpis[run_id] = run
         except Exception as e:
             print(e)
-            print("Something went wrong reading KPIs on try {0}".format(tentativa))
-    return kpis
+            print("Something went wrong reading {0}".format(caminho))
+    return kpis or None
 
 def compute_run_lifetime(run_kpis):
     """Mean battery lifetime over the motes of one run, in years.
