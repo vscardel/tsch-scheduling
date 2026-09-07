@@ -180,6 +180,11 @@ def load_evaluations(output_folder):
         return []
 
 
+def cell_name(factor_combination):
+    """The folder a cell of the factorial writes to."""
+    return '_'.join(factor_combination) if factor_combination else 'baseline'
+
+
 def load_optimal_parameters(factor_combination):
     paramaters = None
     parameters_list = [None] * len(parameters_position)
@@ -365,6 +370,25 @@ if __name__ == '__main__':
     parser.add_argument('-is_min','--experiment_type', type=str, help='determines the time of experiment (minimization or 2^k)', required=True)
 
     parser.add_argument(
+        '--cells',
+        help=(
+            'run only these cells of the factorial, by folder name, comma '
+            'separated. Without it every cell runs, which is what the '
+            'factorial itself wants and what a control arm does not.'
+        )
+    )
+    parser.add_argument(
+        '--tag',
+        help=(
+            'suffix for the output folder and the parameters file, so a '
+            'control arm can reuse a cell without overwriting it. With '
+            '--tag control, cell traffic_queue_charge writes to '
+            'traffic_queue_charge_control and reads its hyperparameters from '
+            'traffic_queue_charge_control_parameters.json, falling back to '
+            'the cell\'s own file.'
+        )
+    )
+    parser.add_argument(
         '-fc', '--factor_combinations',
         help='List of factor combinations',
         type=str,
@@ -462,16 +486,39 @@ if __name__ == '__main__':
         all_combinations.sort(key=len)
         all_combinations.reverse()
         all_combinations.insert(0,['qlearningSBRC24'])
+
+        pedidas = (
+            [c.strip() for c in args.cells.split(',') if c.strip()]
+            if args.cells else None
+        )
+        if pedidas:
+            conhecidas = set(cell_name(c) for c in all_combinations)
+            desconhecidas = [c for c in pedidas if c not in conhecidas]
+            if desconhecidas:
+                raise ValueError(
+                    'no such cell: {0}. The cells are {1}'.format(
+                        ', '.join(desconhecidas), ', '.join(sorted(conhecidas))
+                    )
+                )
+            all_combinations = [
+                c for c in all_combinations if cell_name(c) in pedidas
+            ]
+
         # run each combination
         for factor_combination in all_combinations:
 
+            cell = cell_name(factor_combination)
+            output_folder = '{0}_{1}'.format(cell, args.tag) if args.tag else cell
+
             # empty combination
             if not factor_combination:
-                output_folder = 'baseline'
                 parameters_list = []
             else:
-                output_folder = '_'.join(factor_combination)
-                parameters_list = load_optimal_parameters('_'.join(factor_combination))
+                parameters_list = load_optimal_parameters(
+                    output_folder if args.tag and os.path.exists(
+                        './{0}_parameters.json'.format(output_folder)
+                    ) else cell
+                )
 
             config_name = 'config_{0}.json'.format(output_folder)
             settings = load_config()
