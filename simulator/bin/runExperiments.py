@@ -146,6 +146,39 @@ def load_config():
         settings = json.loads(json_string)
     return settings
 
+def evaluations_path(output_folder):
+    return './{0}_evaluations.json'.format(output_folder)
+
+
+def record_evaluation(output_folder, parameters, value):
+    """Append one finished evaluation, so a lost run resumes instead of restarting.
+
+    Every evaluation is a full set of simulations, so a run that dies two
+    thirds of the way through used to throw away hours. Two configurations
+    never finished at all: each attempt met the same accumulated risk of
+    stopping, and starting over reset the progress but not the risk.
+    """
+    registro = load_evaluations(output_folder)
+    registro.append({
+        'x': [float(p) for p in parameters],
+        'y': float(value),
+    })
+    with open(evaluations_path(output_folder), 'w') as f:
+        json.dump(registro, f)
+
+
+def load_evaluations(output_folder):
+    caminho = evaluations_path(output_folder)
+    if not os.path.exists(caminho):
+        return []
+    try:
+        with open(caminho, 'r') as f:
+            return json.load(f)
+    except Exception:
+        # a half-written file is worth less than starting the record over
+        return []
+
+
 def load_optimal_parameters(factor_combination):
     paramaters = None
     parameters_list = [None] * len(parameters_position)
@@ -297,8 +330,11 @@ def efficience_function(parameters):
         remove_results_folder(curr_output_folder_path)
         if mean_scores:
             ALL_SCORES.append(mean_scores)
+            record_evaluation(args.output_folder, parameters, mean_scores)
             return mean_scores
+        record_evaluation(args.output_folder, parameters, MAX_FUNCTION_VALUE)
         return MAX_FUNCTION_VALUE
+    record_evaluation(args.output_folder, parameters, MAX_FUNCTION_VALUE)
     return MAX_FUNCTION_VALUE
 
 if __name__ == '__main__':
@@ -348,12 +384,25 @@ if __name__ == '__main__':
         print('{0} evaluations, {1} of them random, {2} guided'.format(
             n_calls, n_random_starts, n_calls - n_random_starts))
 
+        anteriores = load_evaluations(args.output_folder)
+        if anteriores:
+            x0 = [e['x'] for e in anteriores]
+            y0 = [e['y'] for e in anteriores]
+            n_calls = max(1, n_calls - len(anteriores))
+            n_random_starts = max(0, n_random_starts - len(anteriores))
+            print('resuming with {0} evaluations already done, {1} to go'.format(
+                len(anteriores), n_calls))
+        else:
+            x0 = y0 = None
+
         res = gp_minimize(efficience_function,
                         [faixa for _, faixa in espaco],
                         n_calls          = n_calls,
                         n_random_starts  = n_random_starts,
                         acq_func         = args.aquisition_function or 'gp_hedge',
                         random_state     = args.random_state,
+                        x0               = x0,
+                        y0               = y0,
                     )
 
         time.sleep(30)
