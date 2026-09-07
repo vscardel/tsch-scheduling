@@ -32,44 +32,10 @@ import math
 import os
 
 from compare_schedulers import load_runs
-from runExperiments import compute_run_lifetime
-
-
-BASE_WEIGHTS = {
-    'latency': 0.25, 'pdr': 0.25, 'lifetime': 0.25, 'join_time': 0.25
-}
-BASE_THRESHOLDS = {
-    'latency': 1.5, 'pdr': 0.95, 'lifetime': 1.0, 'join_time': 1000.0
-}
-BASE_SMOOTHNESS = {
-    'latency': 1.0, 'pdr': 0.2, 'lifetime': 1.5, 'join_time': 0.004
-}
-# whether the score punishes being above the threshold or below it
-ABOVE_IS_BAD = {'latency': True, 'join_time': True, 'pdr': False, 'lifetime': False}
-
-
-def sigmoid(x, threshold, k):
-    return 1.0 / (1.0 + math.exp(-k * (x - threshold)))
-
-
-def run_metrics(run):
-    """The four quantities the score is built from, for one run."""
-    g = run['global-stats']
-    return {
-        'latency': g['e2e-upstream-latency'][0]['mean'],
-        'pdr': g['e2e-upstream-delivery'][0]['value'],
-        'join_time': g['joining-time'][0]['mean'] / 100.0,
-        'lifetime': compute_run_lifetime(run),
-    }
-
-
-def score(metrics, weights, thresholds, smoothness):
-    total = 0.0
-    for nome, valor in metrics.items():
-        acima = sigmoid(valor, thresholds[nome], smoothness[nome])
-        penalidade = acima if ABOVE_IS_BAD[nome] else 1.0 - acima
-        total += weights[nome] * penalidade
-    return total
+from score_model import (
+    ABOVE_IS_BAD, SMOOTHNESS as BASE_SMOOTHNESS, THRESHOLDS as BASE_THRESHOLDS,
+    WEIGHTS as BASE_WEIGHTS, run_metrics, score, sigmoid
+)
 
 
 def mean_score(runs, weights, thresholds, smoothness):

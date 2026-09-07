@@ -38,6 +38,7 @@ import random
 import numpy as np
 from scipy.stats import wilcoxon
 
+from score_model import run_score
 from runExperiments import compute_run_lifetime
 
 
@@ -75,7 +76,18 @@ def _sixp_transactions(run):
     return overhead[1]['total'] if overhead else None
 
 
+def _score(run):
+    """The aggregate score the optimisation and the factorial are built on.
+
+    It is the number every comparison in the manuscript rests on, so it is
+    tested here beside the quantities it is made of rather than only reported
+    as a mean.
+    """
+    return run_score(run)
+
+
 METRICS = [
+    ('score',            _score,            'lower'),
     ('latency',          _latency,          'lower'),
     ('pdr',              _pdr,              'higher'),
     ('join_time',        _join,             'lower'),
