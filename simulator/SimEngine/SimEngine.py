@@ -29,7 +29,6 @@ from . import SimLog
 from . import Connectivity
 from . import SimConfig
 
-from SimEngine.Mote.scheduling_functions.Qlearning import SchedulingFunctionQlearning
 
 # =========================== defines =========================================
 
@@ -323,11 +322,16 @@ class DiscreteEventEngine(threading.Thread):
     # ======================== private ========================================
 
     def save_qlearning_stats(self):
+        """Write the per-mote learning statistics of whichever learner ran.
+
+        This used to test for DynQ and break out of the loop on the first mote
+        that was not one, so Q-static and RL-SF wrote nothing at all and a
+        single non-learning mote would have silenced the rest. Any scheduling
+        function that keeps the statistics gets them written.
+        """
         for mote in self.motes:
-            if isinstance(mote.sf, SchedulingFunctionQlearning):
+            if getattr(mote.sf, 'QLEARNING_STATS', None):
                 self._save_qlearning_mote_stat(mote)
-            else:
-                break
 
     def _save_qlearning_mote_stat(self, mote):
         current_id = mote.id

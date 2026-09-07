@@ -10,6 +10,7 @@ import random
 import SimEngine
 
 from .. import MoteDefines as d
+from .state_visits import empty_state_stats, record_action, record_state
 from math import factorial as fat
 from math import e
 from pprint import pprint
@@ -117,6 +118,7 @@ class SchedulingFunctionQlearning(SchedulingFunctionBase):
             'EPSILON': {},
             'REWARD_TERMS': {}
         }
+        self.QLEARNING_STATS.update(empty_state_stats())
 
         #traffic estimate variables
         self.TRAFFIC = 0
@@ -217,6 +219,7 @@ class SchedulingFunctionQlearning(SchedulingFunctionBase):
             # single reading.
             discrete_state = self.discretize_variables(current_state)
             state_number = self.map_discrete_state_to_number(discrete_state)
+            record_state(self.QLEARNING_STATS, state_number)
 
             if hasattr(self, 'last_action'):
                 self.compute_q_table(
@@ -241,10 +244,12 @@ class SchedulingFunctionQlearning(SchedulingFunctionBase):
             # a fixed threshold made a mote draw at random until the threshold
             # was crossed and then never draw again, and half the motes never
             # reached the crossing at all.
-            if random.random() < self.EPSLON:
+            explored = random.random() < self.EPSLON
+            if explored:
                 action = random.choice([0, 1, 2])
             else:
                 action = self.return_best_q_action(state_number)
+            record_action(self.QLEARNING_STATS, state_number, action, explored)
 
 
             # 2) how many cells to move, following the manuscript, but never

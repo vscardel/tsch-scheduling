@@ -7,6 +7,7 @@ import random
 from builtins import range
 
 from .. import MoteDefines as d
+from .state_visits import empty_state_stats, record_action, record_state
 from .MSF import SchedulingFunctionMSF
 
 
@@ -86,11 +87,15 @@ class SchedulingFunctionRLSF(SchedulingFunctionMSF):
         self.cells_used = 0
         self.dropped_a_packet = False
 
-        # for the record, so a run can be read back without re-deriving it
+        # for the record, so a run can be read back without re-deriving it.
+        # The name is the one SimEngine writes out for every learner, so this
+        # baseline's visited states land beside DynQ's and Q-static's.
         self.RLSF_STATS = {
             'DECISIONS': {},
             'EPSILON': {},
         }
+        self.RLSF_STATS.update(empty_state_stats())
+        self.QLEARNING_STATS = self.RLSF_STATS
         self.decision_count = 0
 
     # ======================= public ==========================================
@@ -190,15 +195,20 @@ class SchedulingFunctionRLSF(SchedulingFunctionMSF):
 
     def _choose_action(self, state):
         """Epsilon-greedy over the row, with the exponential decay of Eq. 8."""
-        if random.random() < self.epsilon:
-            return random.randrange(self.MAX_CELLS)
-        row = self.q_table[state]
-        best = max(row)
-        # ties are broken at random rather than by index, otherwise action 0
-        # wins every tie and the untried actions of a fresh row never run
-        return random.choice(
-            [i for i, value in enumerate(row) if value == best]
-        )
+        explored = random.random() < self.epsilon
+        if explored:
+            action = random.randrange(self.MAX_CELLS)
+        else:
+            row = self.q_table[state]
+            best = max(row)
+            # ties are broken at random rather than by index, otherwise action 0
+            # wins every tie and the untried actions of a fresh row never run
+            action = random.choice(
+                [i for i, value in enumerate(row) if value == best]
+            )
+        record_state(self.RLSF_STATS, state)
+        record_action(self.RLSF_STATS, state, action, explored)
+        return action
 
     def _update_q_table(self, state, action, reward, next_state):
         """Q <- (1-a)Q + a(r + B max Q'), the standard update.
