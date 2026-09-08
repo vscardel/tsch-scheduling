@@ -193,3 +193,81 @@ def test_the_threshold_is_a_setting_not_a_constant():
     import inspect
     fonte = inspect.getsource(QStatic.__init__)
     assert "'QSTATIC_TAU_CHARGE'" in fonte
+
+
+# ------------------------------------------------------------- cell removal
+
+class _Cell(object):
+    def __init__(self, options, num_tx=0, num_tx_ack=0, num_rx=0, slot=0):
+        self.options = options
+        self.num_tx = num_tx
+        self.num_tx_ack = num_tx_ack
+        self.num_rx = num_rx
+        self.slot_offset = slot
+        self.channel_offset = 0
+
+
+class _Remover(object):
+    SLOTFRAME_HANDLE = 1
+
+    def __init__(self, cells, smart):
+        self.cells = cells
+        self.SMART_CELL_REMOVAL = smart
+        tsch = type('T', (), {'get_cells': lambda _s, mac, handle: cells})()
+        rpl = type('R', (), {'getPreferredParent': lambda _s: 'parent'})()
+        self.mote = type('M', (), {'tsch': tsch, 'rpl': rpl})()
+
+    _is_unused_cell = QStatic.__dict__['_is_unused_cell']
+    _get_cells_to_delete = QStatic.__dict__['_get_cells_to_delete']
+
+
+TX = ['TX']
+RX = ['RX']
+
+
+def test_a_tx_cell_can_be_offered_for_deletion_at_all():
+    """cell_option is a list and was compared against the bare 'TX' string, so
+    every call fell through to the RX branch and asked for TX cells that had
+    received something. Removing a TX cell was a no-op."""
+    ociosa = _Cell(TX, num_tx=10, num_tx_ack=1)
+    assert _Remover([ociosa], smart=True)._get_cells_to_delete(TX) != []
+
+
+def test_the_smart_rule_keeps_the_busy_tx_cells():
+    ocupada = _Cell(TX, num_tx=10, num_tx_ack=9, slot=1)
+    ociosa = _Cell(TX, num_tx=10, num_tx_ack=1, slot=2)
+    saida = _Remover([ocupada, ociosa], smart=True)._get_cells_to_delete(TX)
+    assert [c['slotOffset'] for c in saida] == [2]
+
+
+def test_the_smart_rule_keeps_the_rx_cells_that_received_something():
+    usada = _Cell(RX, num_rx=5, slot=1)
+    ociosa = _Cell(RX, num_rx=0, slot=2)
+    saida = _Remover([usada, ociosa], smart=True)._get_cells_to_delete(RX)
+    assert [c['slotOffset'] for c in saida] == [2]
+
+
+def test_a_tx_cell_that_never_transmitted_is_kept_and_does_not_divide():
+    """No ratio to judge it by, and num_tx stays out of the denominator."""
+    nova = _Cell(TX, num_tx=0, num_tx_ack=0)
+    assert _Remover([nova], smart=True)._get_cells_to_delete(TX) == []
+
+
+def test_off_by_default_every_occupied_cell_is_a_candidate():
+    """The manuscript gives the utilisation rule to DynQ alone, so the
+    baseline offers the whole set the way the simulator does."""
+    ocupada = _Cell(TX, num_tx=10, num_tx_ack=9, slot=1)
+    ociosa = _Cell(TX, num_tx=10, num_tx_ack=1, slot=2)
+    saida = _Remover([ocupada, ociosa], smart=False)._get_cells_to_delete(TX)
+    assert sorted(c['slotOffset'] for c in saida) == [1, 2]
+
+
+def test_cells_of_the_other_direction_are_never_offered():
+    saida = _Remover([_Cell(RX, num_rx=0)], smart=True)._get_cells_to_delete(TX)
+    assert saida == []
+
+
+def test_the_switch_is_off_unless_a_config_turns_it_on():
+    import inspect
+    fonte = inspect.getsource(QStatic.__init__)
+    assert "'QSTATIC_SMART_CELL_REMOVAL', False" in fonte

@@ -47,6 +47,12 @@ class SchedulingFunctionQlearningSBRC24(SchedulingFunctionBase):
         # tau_C of Equation 9, as a fraction of a full battery. The manuscript
         # does not publish any of the three thresholds.
         self.TAU_CHARGE = getattr(self.settings, 'QSTATIC_TAU_CHARGE', 0.5)
+        # off by default: the manuscript gives the utilisation-aware removal to
+        # DynQ alone. On, it runs the same rule, which is what a comparison
+        # holding the heuristic constant needs.
+        self.SMART_CELL_REMOVAL = getattr(
+            self.settings, 'QSTATIC_SMART_CELL_REMOVAL', False
+        )
 
         # Per-mote state. Each mote runs its own Q-learning agent, so none of
         # this may live on the class: a mutable class attribute is a single
@@ -364,32 +370,67 @@ class SchedulingFunctionQlearningSBRC24(SchedulingFunctionBase):
             return list(set(available_slots) - self.locked_slots)
         return []
     
-    def _get_unused_cells(self,cell_option):
+    def _is_unused_cell(self, cell, cell_option):
+        """Whether a cell is a candidate for removal under the smart rule.
+
+        The same criterion DynQ uses, quoted from algorithm.tex: a TX cell
+        whose acknowledged fraction is below 80%, or an RX cell that received
+        nothing. A TX cell that has never transmitted has no ratio to judge it
+        by, which also keeps num_tx out of a division.
+        """
+        if cell.options != cell_option:
+            return False
+        # cell_option arrives as a list, the same shape as cell.options, so it
+        # has to be tested with "in"
+        if d.CELLOPTION_TX in cell_option:
+            if cell.num_tx == 0:
+                return False
+            return float(cell.num_tx_ack) / cell.num_tx < 0.8
+        return cell.num_rx == 0
+
+    def _get_cells_to_delete(self, cell_option):
+        """The cells this scheduling function offers up for deletion.
+
+        By default the whole occupied set in random order, which is the
+        simulator's own behaviour and what the manuscript attributes to the
+        baseline: algorithm.tex introduces the utilisation rule as a
+        modification made for DynQ, and adds that "otherwise, the logic of
+        insertion or removal is the same as in the baseline".
+
+        QSTATIC_SMART_CELL_REMOVAL turns the utilisation rule on here too, so
+        the two learners can be compared with the heuristic held constant. It
+        is off by default, and DynQ's own SMART_CELL_REMOVAL is on by default,
+        which is why they are two settings and not one.
+
+        This used to compare cell_option, a list, against the bare
+        d.CELLOPTION_TX string. That is never true, so every call fell through
+        to the RX branch and asked for TX cells with num_rx > 0, of which there
+        are none. The list came back empty and the 6P request was never sent:
+        removing a TX cell was a no-op on the decision path that produces most
+        decisions. The RX branch had the criterion inverted as well, keeping
+        the idle cells and offering up the busy ones.
+        """
         preferred_parent = self.mote.rpl.getPreferredParent()
-        if cell_option == d.CELLOPTION_TX:
-            available_cells = [
-                            {"channelOffset":cell.channel_offset,
-                                "slotOffset":cell.slot_offset} 
-                            for cell in self.mote.tsch.get_cells(
-                            preferred_parent,
-                            self.SLOTFRAME_HANDLE
-                        )
-                    if cell.options == cell_option and \
-                    float(cell.num_tx_ack )/ cell.num_tx >= 0.8]
+        cells = [
+            cell
+            for cell in self.mote.tsch.get_cells(
+                preferred_parent, self.SLOTFRAME_HANDLE
+            )
+            if cell.options == cell_option
+        ]
+        if self.SMART_CELL_REMOVAL:
+            cells = [
+                cell for cell in cells
+                if self._is_unused_cell(cell, cell_option)
+            ]
         else:
-            available_cells = [
-                            {"channelOffset":cell.channel_offset,
-                                "slotOffset":cell.slot_offset} 
-                            for cell in self.mote.tsch.get_cells(
-                            preferred_parent,
-                            self.SLOTFRAME_HANDLE
-                        )
-                    if cell.options == cell_option and \
-                    cell.num_rx > 0]
-        unused_cells = []
-        for cell in available_cells:
-            unused_cells.append(cell)
-        return unused_cells
+            cells = list(cells)
+            random.shuffle(cells)
+        return [
+            {"channelOffset": cell.channel_offset,
+             "slotOffset": cell.slot_offset}
+            for cell in cells
+        ]
     
 
     def _compute_average_traffic(self, current_traffic):
@@ -1104,10 +1145,12 @@ class SchedulingFunctionQlearningSBRC24(SchedulingFunctionBase):
             num_cells
         ):
 
-        cells_to_delete = self._get_unused_cells(cell_option)
-        if num_cells > len(cells_to_delete):
-            num_cells = 1
-        if len(cells_to_delete) >= 1:
+        cells_to_delete = self._get_cells_to_delete(cell_option)
+        # ask for as many as there are, rather than dropping to one: this used
+        # to replace a chosen magnitude of two or three with one whenever the
+        # candidates were fewer than asked for
+        num_cells = min(num_cells, len(cells_to_delete))
+        if num_cells >= 1:
             callback = self._create_delete_request_callback(
                 preferred_parent,
                 len(cells_to_delete),
