@@ -314,8 +314,14 @@ def summarise(nome, runs, bins):
 
 
 def media_de(serie):
+    """None, not zero, when no run reached this stretch of the run.
+
+    Early windows are often empty: a mote decides nothing before it has
+    joined. Reporting that as a mean of zero would put a reward of zero and a
+    settled temporal difference where there is simply no measurement.
+    """
     valores = [v for v in serie if v is not None]
-    return sum(valores) / len(valores) if valores else 0.0
+    return sum(valores) / len(valores) if valores else None
 
 
 def primeiro_terco(serie):
@@ -344,16 +350,20 @@ def greedy_share(runs):
     return ganancioso / total if total else 0.0
 
 
+def numero(valor):
+    return 'sem dados' if valor is None else '%.4f' % valor
+
+
 def imprimir(nome, r, bins):
     print('')
     print('=== {0} ==='.format(nome))
     print('  {0} runs, {1} motes-run, {2} decisoes, ate ASN {3}'.format(
         r['runs'], r['motes'], r['decisions'], r['span_asn']))
-    print('  recompensa media por decisao: %.4f' % r['mean_reward'])
-    print('    no ultimo terco da rodada:  %.4f' % r['reward_last_third'])
-    print('  |erro TD| no primeiro terco:  %.4f' % r['td_first_third'])
-    print('    no ultimo terco:            %.4f' % r['td_last_third'])
-    if r['td_first_third']:
+    print('  recompensa media por decisao: %s' % numero(r['mean_reward']))
+    print('    no ultimo terco da rodada:  %s' % numero(r['reward_last_third']))
+    print('  |erro TD| no primeiro terco:  %s' % numero(r['td_first_third']))
+    print('    no ultimo terco:            %s' % numero(r['td_last_third']))
+    if r['td_first_third'] and r['td_last_third'] is not None:
         queda = 100.0 * (1 - r['td_last_third'] / r['td_first_third'])
         print('    queda: %.1f%%' % queda)
     parada = r['converged_at_bin']

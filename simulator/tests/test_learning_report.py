@@ -169,3 +169,11 @@ def test_a_folder_without_learners_yields_nothing_to_pair(tmpdir):
     """MSF and EMSF write no trace, and the pair is dropped rather than
     given a zero that would read as a real value."""
     assert lr.per_run_metrics(str(tmpdir)) == {}
+
+
+def test_a_stretch_no_run_reached_is_not_a_measurement_of_zero():
+    """Motes decide nothing before they join, so early windows are empty.
+    A mean of zero there would put a settled temporal difference and a reward
+    of zero where there is no measurement at all."""
+    assert lr.media_de([None, None]) is None
+    assert lr.media_de([None, 2.0, 4.0]) == 3.0
