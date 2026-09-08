@@ -37,15 +37,29 @@ def test_rlsf_runs_on_its_own_papers_hyperparameters(base):
 
 
 def test_the_ablation_differs_from_dynq_only_in_the_removal_rule(base):
-    """If anything else differs, the ablation attributes the wrong cause."""
+    """If anything else differs, the ablation attributes the wrong cause.
+
+    The full arm leaves SMART_CELL_REMOVAL out of the config, and Qlearning
+    reads a missing one as on, so the two arms differ in that key alone.
+    """
     completo = build_config(base, arm('dynq'), 50, 30, 10, 3750)
     ablacao = build_config(base, arm('dynq_sem_remocao'), 50, 30, 10, 3750)
     a = completo['settings']['regular']
     b = ablacao['settings']['regular']
     diferencas = [k for k in set(a) | set(b) if a.get(k) != b.get(k)]
     assert diferencas == ['SMART_CELL_REMOVAL']
-    assert a['SMART_CELL_REMOVAL'] is True
     assert b['SMART_CELL_REMOVAL'] is False
+
+
+def test_removal_is_on_unless_a_config_turns_it_off():
+    """The default the ablation is measured against lives in the code, so a
+    config that never mentions the key still runs the full method."""
+    from SimEngine.Mote.scheduling_functions.Qlearning import (
+        SchedulingFunctionQlearning
+    )
+    import inspect
+    fonte = inspect.getsource(SchedulingFunctionQlearning.__init__)
+    assert "'SMART_CELL_REMOVAL', True" in fonte
 
 
 def test_every_arm_writes_somewhere_of_its_own(base):
