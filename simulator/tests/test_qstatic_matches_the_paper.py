@@ -371,3 +371,41 @@ def test_stopping_does_not_send_the_agent_back_to_full_exploration():
     agente.stop()
     assert agente.EPISODE == 400
     assert agente.EPSLON == agente.MIN_EPSLON
+
+
+# ------------------------------------------------------------ the reward trace
+
+class _Recorder(object):
+    def __init__(self):
+        self.QLEARNING_STATS = {'CUMULATIVE_REWARD': {}, 'EPSILON': {}}
+        self.RECORDED_STEP = 0
+        self.CUMULATIVE_REWARD = 0
+        self.EPSLON = 0.4
+
+    _record_reward = QStatic.__dict__['_record_reward']
+
+
+def test_the_reward_trace_accumulates():
+    """Q-static recorded no reward at all, and reviewer 3 asked for the reward
+    curve of both proposals."""
+    agente = _Recorder()
+    for r in (3, -1, -2):
+        agente._record_reward(r)
+    assert agente.QLEARNING_STATS['CUMULATIVE_REWARD'] == {1: 3, 2: 2, 3: 0}
+
+
+def test_the_trace_keeps_epsilon_beside_the_reward():
+    agente = _Recorder()
+    agente._record_reward(1)
+    assert agente.QLEARNING_STATS['EPSILON'] == {1: 0.4}
+
+
+def test_recording_draws_no_random_numbers():
+    """An instrumented run has to score what it scored before."""
+    import random
+    agente = _Recorder()
+    random.seed(1)
+    esperado = random.random()
+    random.seed(1)
+    agente._record_reward(2)
+    assert random.random() == esperado

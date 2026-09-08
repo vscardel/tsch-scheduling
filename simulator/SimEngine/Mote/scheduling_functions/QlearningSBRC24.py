@@ -74,7 +74,14 @@ class SchedulingFunctionQlearningSBRC24(SchedulingFunctionBase):
         # the same per-mote counters DynQ keeps, so the two learners' visited
         # states can be put side by side rather than described one at a time
         self.QLEARNING_STATS = empty_state_stats()
-        self.cumulative_reward = 0
+        # The same reward trace DynQ keeps, so the two learners' reward curves
+        # can be put side by side. Reviewer 3 asked for exactly that, and
+        # nothing in a Q-static run recorded a reward at all: the field that
+        # was there for it was never incremented by anything.
+        self.QLEARNING_STATS['CUMULATIVE_REWARD'] = {}
+        self.QLEARNING_STATS['EPSILON'] = {}
+        self.RECORDED_STEP = 0
+        self.CUMULATIVE_REWARD = 0
         self.TX_CELLS_PASSED = 0
         self.RX_CELLS_PASSED = 0
 
@@ -193,11 +200,13 @@ class SchedulingFunctionQlearningSBRC24(SchedulingFunctionBase):
                 # observed one decision earlier, so both ends of the update
                 # were a decision out of step.
                 if self.last_action is not None:
+                    reward = self.compute_reward(discrete_state)
+                    self._record_reward(reward)
                     self.compute_q_table(
                         self.last_state_number,
                         state_number,
                         self.last_action,
-                        self.compute_reward(discrete_state)
+                        reward
                     )
 
                 self.num_packets_in_current_episode = 0
@@ -470,6 +479,19 @@ class SchedulingFunctionQlearningSBRC24(SchedulingFunctionBase):
             self.array_energy_consumed.pop(0)
         return self.AVERAGE_ENERGY_CONSUMED
     
+
+    def _record_reward(self, reward):
+        """Keep the reward trace, without touching the decision.
+
+        Reads no random numbers and changes no state the agent acts on, so an
+        instrumented run scores exactly what it scored before.
+        """
+        self.RECORDED_STEP += 1
+        self.CUMULATIVE_REWARD += reward
+        self.QLEARNING_STATS['CUMULATIVE_REWARD'][self.RECORDED_STEP] = (
+            self.CUMULATIVE_REWARD
+        )
+        self.QLEARNING_STATS['EPSILON'][self.RECORDED_STEP] = self.EPSLON
 
     def compute_reward(self, discrete_state):
         """Equation 11, on a state that has already been discretised.
