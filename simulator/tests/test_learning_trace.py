@@ -121,3 +121,148 @@ def test_the_trace_survives_a_json_round_trip():
     stats = empty_state_stats()
     record_decision(stats, 1, 10, 1.5, -0.25, {0: [1.0, 2.0, 3.0]})
     assert json.loads(json.dumps(stats)) == stats
+
+
+# ------------------------------------------------- the switch, in both learners
+
+import pytest
+
+from SimEngine.Mote import MoteDefines as d
+
+
+def agente(sim_engine, monkeypatch, sf_class, learned=None):
+    """A mote of the requested learner, with 6P and the parent stubbed out."""
+    config = {
+        'exec_numMotes'         : 4,
+        'sf_class'              : sf_class,
+        'factorial_combinations': ['traffic', 'queue', 'charge'],
+    }
+    if learned is not None:
+        config['LEARNED_POLICY'] = learned
+    engine = sim_engine(diff_config=config)
+    mote = engine.motes[1]
+    mote.sf.start()
+
+    monkeypatch.setattr(mote.rpl, 'getPreferredParent', lambda: 'pai')
+    monkeypatch.setattr(mote, 'clear_to_send_EBs_DATA', lambda: True)
+    monkeypatch.setattr(mote.sf, 'sixp_interface_add', lambda **kw: None)
+    monkeypatch.setattr(mote.sf, 'sixp_interface_delete', lambda **kw: None)
+    return mote.sf
+
+
+def decide(sf):
+    """One decision, whichever signature this learner's entry point has."""
+    if sf.__class__.__name__.endswith('SBRC24'):
+        sf.adapt_to_traffic([d.CELLOPTION_TX])
+    else:
+        sf.adapt_to_traffic([d.CELLOPTION_TX], None, 'cells')
+
+
+@pytest.fixture(params=['Qlearning', 'QlearningSBRC24'])
+def sf_class(request):
+    return request.param
+
+
+def test_learning_is_on_unless_someone_turns_it_off(sim_engine, monkeypatch,
+                                                    sf_class):
+    """Every run recorded so far was a learned run, and stays one."""
+    sf = agente(sim_engine, monkeypatch, sf_class)
+    assert sf.LEARNED_POLICY is True
+
+
+def test_the_control_arm_never_consults_the_table(sim_engine, monkeypatch,
+                                                  sf_class):
+    """Same key, same meaning, in both learners."""
+    sf = agente(sim_engine, monkeypatch, sf_class, learned=False)
+
+    def nao_deveria(state):
+        raise AssertionError('the control arm read the Q-table')
+    monkeypatch.setattr(sf, 'return_best_q_action', nao_deveria)
+
+    for _ in range(20):
+        decide(sf)
+
+    assert sf.QLEARNING_STATS['STATE_VISITS']
+
+
+def test_the_control_arm_still_learns_from_what_it_did(sim_engine, monkeypatch,
+                                                       sf_class):
+    """The table goes on being updated, so what the two arms differ in is
+    acting on it and nothing else."""
+    sf = agente(sim_engine, monkeypatch, sf_class, learned=False)
+    monkeypatch.setattr(sf, 'return_best_q_action', lambda state: 0)
+
+    for _ in range(20):
+        decide(sf)
+
+    assert any(
+        registro['td_error'] != 0
+        for registro in sf.QLEARNING_STATS['DECISIONS'].values()
+    )
+
+
+def test_the_control_arm_reports_no_greedy_choices(sim_engine, monkeypatch,
+                                                   sf_class):
+    """Otherwise the greedy share of a control run would read as policy."""
+    sf = agente(sim_engine, monkeypatch, sf_class, learned=False)
+    for _ in range(20):
+        decide(sf)
+
+    for linha in sf.QLEARNING_STATS['STATE_ACTION'].values():
+        assert 'greedy' not in linha
+
+
+def test_the_learned_arm_takes_the_action_its_table_prefers(sim_engine,
+                                                            monkeypatch,
+                                                            sf_class):
+    sf = agente(sim_engine, monkeypatch, sf_class, learned=True)
+    monkeypatch.setattr(sf, 'return_best_q_action', lambda state: 1)
+    if sf.__class__.__name__.endswith('SBRC24'):
+        sf.EPSLON_THRESHOLD = 1.0       # below the threshold is the greedy phase
+    else:
+        sf.MIN_EPSLON = sf.MAX_EPSLON = 0.0
+
+    for _ in range(5):
+        decide(sf)
+
+    assert sf.last_action == 1
+
+
+def test_every_decision_leaves_a_record_in_both(sim_engine, monkeypatch,
+                                                sf_class):
+    sf = agente(sim_engine, monkeypatch, sf_class)
+    for _ in range(10):
+        decide(sf)
+
+    decisoes = sf.QLEARNING_STATS['DECISIONS']
+    # the first decision has no reward yet: the reward of an action is only
+    # knowable from the state it leads to
+    assert len(decisoes) == 9
+    for registro in decisoes.values():
+        assert sorted(registro.keys()) == [
+            'asn', 'policy_changes', 'reward', 'td_error'
+        ]
+
+
+def test_the_run_ends_with_its_table_on_record(sim_engine, monkeypatch,
+                                               sf_class):
+    sf = agente(sim_engine, monkeypatch, sf_class)
+    for _ in range(10):
+        decide(sf)
+
+    gravada = sf.QLEARNING_STATS['Q_TABLE']
+    assert gravada == dict(
+        (str(linha), list(valores)) for linha, valores in sf.Q_table.items()
+    )
+
+
+def test_the_trace_puts_both_learners_on_the_same_clock(sim_engine, monkeypatch,
+                                                        sf_class):
+    """They decide on different triggers, so step numbers are not comparable
+    across the two and ASN is what is."""
+    sf = agente(sim_engine, monkeypatch, sf_class)
+    for _ in range(10):
+        decide(sf)
+
+    asns = [r['asn'] for r in sf.QLEARNING_STATS['DECISIONS'].values()]
+    assert asns and all(asn == sf.engine.getAsn() for asn in asns)

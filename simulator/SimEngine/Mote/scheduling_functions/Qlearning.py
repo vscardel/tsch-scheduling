@@ -10,7 +10,9 @@ import random
 import SimEngine
 
 from .. import MoteDefines as d
-from .state_visits import empty_state_stats, record_action, record_state
+from .state_visits import (
+    empty_state_stats, record_action, record_decision, record_state
+)
 from math import factorial as fat
 from math import e
 from pprint import pprint
@@ -93,6 +95,15 @@ class SchedulingFunctionQlearning(SchedulingFunctionBase):
         self.W_UTILIZATION = getattr(self.settings, 'W_UTILIZATION', 1.0)
         self.W_LATENCY     = getattr(self.settings, 'W_LATENCY', 1.0)
         self.W_ENERGY      = getattr(self.settings, 'W_ENERGY', 1.0)
+
+        # Whether the action comes from the Q-table or from a uniform draw.
+        # A run with this false is the control the learned run is measured
+        # against: same seeds, same environment, and the table still gets
+        # updated, so the only thing that differs is whether the table is
+        # consulted. What the learned run gains over that control is what
+        # 'the agent learned something' means, and being a paired effect
+        # size it is comparable between two learners whose rewards are not.
+        self.LEARNED_POLICY = getattr(self.settings, 'LEARNED_POLICY', True)
 
         # Per-mote state. Each mote runs its own Q-learning agent, so none of
         # this may live on the class: a mutable class attribute is a single
@@ -289,11 +300,17 @@ class SchedulingFunctionQlearning(SchedulingFunctionBase):
             # was crossed and then never draw again, and half the motes never
             # reached the crossing at all.
             explored = random.random() < self.EPSLON
-            if explored:
+            # The control arm draws every action. The coin above is spent
+            # either way, so both arms stay on the same stream of random
+            # numbers for as long as they possibly can.
+            at_random = explored or not self.LEARNED_POLICY
+            if at_random:
                 action = random.choice([0, 1, 2])
             else:
                 action = self.return_best_q_action(state_number)
-            record_action(self.QLEARNING_STATS, state_number, action, explored)
+            record_action(
+                self.QLEARNING_STATS, state_number, action, at_random
+            )
 
 
             # 2) how many cells to move, following the manuscript, but never
@@ -991,6 +1008,18 @@ class SchedulingFunctionQlearning(SchedulingFunctionBase):
 
         # Update Q-value using Q-learning update rule
         self.Q_table[curr_state_number][action] += self.ALFA * temporal_difference
+
+        # RECORDED_STEP still numbers the decision being scored here: the
+        # reward belongs to the action taken last time round, and the step
+        # is only advanced once this update is done.
+        record_decision(
+            self.QLEARNING_STATS,
+            step     = self.RECORDED_STEP,
+            asn      = self.engine.getAsn(),
+            reward   = reward,
+            td_error = temporal_difference,
+            q_table  = self.Q_table,
+        )
         # print(self.Q_table)
         # from pprint import pprint 
         # print(reward)

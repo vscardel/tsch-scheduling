@@ -6,7 +6,9 @@ import SimEngine
 import netaddr
 import numpy as np
 from .. import MoteDefines as d
-from .state_visits import empty_state_stats, record_action, record_state
+from .state_visits import (
+    empty_state_stats, record_action, record_decision, record_state
+)
 from math import e
 
 from SimEngine.Mote.sfBase import SchedulingFunctionBase
@@ -47,6 +49,16 @@ class SchedulingFunctionQlearningSBRC24(SchedulingFunctionBase):
         # tau_C of Equation 9, as a fraction of a full battery. The manuscript
         # does not publish any of the three thresholds.
         self.TAU_CHARGE = getattr(self.settings, 'QSTATIC_TAU_CHARGE', 0.5)
+
+        # The same switch DynQ honours, read the same way and meaning the
+        # same thing: false draws every action uniformly and never consults
+        # the table, while the table goes on being updated. One key for the
+        # control arm in both learners, because the alternatives are not
+        # equivalent. Forcing exploration here by setting EPSLON_THRESHOLD
+        # to zero would also change what the phase switch means, which is
+        # exactly how two arms came out byte identical earlier in this
+        # revision.
+        self.LEARNED_POLICY = getattr(self.settings, 'LEARNED_POLICY', True)
         # off by default: the manuscript gives the utilisation-aware removal to
         # DynQ alone. On, it runs the same rule, which is what a comparison
         # holding the heuristic constant needs.
@@ -212,13 +224,14 @@ class SchedulingFunctionQlearningSBRC24(SchedulingFunctionBase):
                 self.num_packets_in_current_episode = 0
 
                 explored = not (self.EPSLON < self.EPSLON_THRESHOLD)
-                if explored:
+                at_random = explored or not self.LEARNED_POLICY
+                if at_random:
                     action = random.choice([0,1,2])
                 else:
                     action = self.return_best_q_action(state_number)
                 record_state(self.QLEARNING_STATS, state_number)
                 record_action(
-                    self.QLEARNING_STATS, state_number, action, explored
+                    self.QLEARNING_STATS, state_number, action, at_random
                 )
 
                 # Equations 12 and 13. Both reach zero, in states 111 and 000
@@ -623,6 +636,17 @@ class SchedulingFunctionQlearningSBRC24(SchedulingFunctionBase):
             reward + self.BETA * best_next_q - self.Q_table[curr_state][action]
         )
         self.Q_table[curr_state][action] += self.ALFA * temporal_difference
+
+        # _record_reward has already advanced the step to the decision this
+        # update scores, so the trace and the cumulative reward agree.
+        record_decision(
+            self.QLEARNING_STATS,
+            step     = self.RECORDED_STEP,
+            asn      = self.engine.getAsn(),
+            reward   = reward,
+            td_error = temporal_difference,
+            q_table  = self.Q_table,
+        )
     
     def _compute_queue_ratio(self):
         return len(self.mote.tsch.txQueue)/float(self.settings.tsch_tx_queue_size)

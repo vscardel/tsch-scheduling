@@ -58,7 +58,8 @@
             "W_LATENCY": 1, 
             "W_ENERGY": 1, 
             "MAX_SLOTFRAMES_BETWEEN_DECISIONS": 50, 
-            "LAMBDA": 2
+            "LAMBDA": 2, 
+            "LEARNED_POLICY": true
         }, 
         "combination": {
             "exec_numMotes": [
