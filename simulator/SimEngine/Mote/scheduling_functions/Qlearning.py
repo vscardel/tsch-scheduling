@@ -10,6 +10,7 @@ import random
 import SimEngine
 
 from .. import MoteDefines as d
+from .learning_rate import step_size
 from .state_visits import (
     empty_state_stats, record_action, record_decision, record_state
 )
@@ -104,6 +105,12 @@ class SchedulingFunctionQlearning(SchedulingFunctionBase):
         # 'the agent learned something' means, and being a paired effect
         # size it is comparable between two learners whose rewards are not.
         self.LEARNED_POLICY = getattr(self.settings, 'LEARNED_POLICY', True)
+        # Watkins requires the learning rate to shrink; a constant one
+        # never lets the estimate settle. Zero keeps the constant rate
+        # every run so far has used, so nothing changes unless asked.
+        self.ALFA_DECAY_TAU = getattr(self.settings, 'ALFA_DECAY_TAU', 0)
+        self.ALFA_VISITS = {}
+
 
         # Per-mote state. Each mote runs its own Q-learning agent, so none of
         # this may live on the class: a mutable class attribute is a single
@@ -1007,7 +1014,12 @@ class SchedulingFunctionQlearning(SchedulingFunctionBase):
 
 
         # Update Q-value using Q-learning update rule
-        self.Q_table[curr_state_number][action] += self.ALFA * temporal_difference
+        alfa = step_size(
+            self.ALFA, self.ALFA_DECAY_TAU, self.ALFA_VISITS,
+            (curr_state_number, action)
+        )
+        delta_q = alfa * temporal_difference
+        self.Q_table[curr_state_number][action] += delta_q
 
         # RECORDED_STEP still numbers the decision being scored here: the
         # reward belongs to the action taken last time round, and the step
@@ -1018,6 +1030,7 @@ class SchedulingFunctionQlearning(SchedulingFunctionBase):
             asn      = self.engine.getAsn(),
             reward   = reward,
             td_error = temporal_difference,
+            delta_q  = delta_q,
             q_table  = self.Q_table,
         )
         # print(self.Q_table)

@@ -30,10 +30,11 @@ def test_one_record_per_decision():
     tabela = {0: [0, 0, 0], 1: [0, 0, 0]}
     for passo in range(1, 4):
         record_decision(stats, passo, asn=passo * 100, reward=1.5,
-                        td_error=-0.25, q_table=tabela)
+                        td_error=-0.25, delta_q=-0.1, q_table=tabela)
     assert sorted(stats['DECISIONS'].keys()) == ['1', '2', '3']
     assert stats['DECISIONS']['2'] == {
-        'asn': 200, 'reward': 1.5, 'td_error': -0.25, 'policy_changes': 0
+        'asn': 200, 'reward': 1.5, 'td_error': -0.25, 'delta_q': -0.1,
+        'policy_changes': 0, 'policy_code': 0
     }
 
 
@@ -41,7 +42,7 @@ def test_the_temporal_difference_is_kept_rather_than_discarded():
     """It was computed on every update in both learners and never stored."""
     stats = empty_state_stats()
     record_decision(stats, 1, asn=10, reward=0.0, td_error=3.75,
-                    q_table={0: [0, 0, 0]})
+                    delta_q=0.5, q_table={0: [0, 0, 0]})
     assert stats['DECISIONS']['1']['td_error'] == 3.75
 
 
@@ -49,22 +50,22 @@ def test_a_changed_preference_is_counted_and_an_unchanged_one_is_not():
     stats = empty_state_stats()
     tabela = {0: [0.0, 0.0, 0.0], 1: [0.0, 0.0, 0.0]}
 
-    record_decision(stats, 1, 10, 0.0, 0.0, tabela)
+    record_decision(stats, 1, 10, 0.0, 0.0, 0.0, tabela)
     assert stats['DECISIONS']['1']['policy_changes'] == 0
 
     tabela[0][2] = 1.0                      # row 0 now prefers action 2
-    record_decision(stats, 2, 20, 0.0, 0.0, tabela)
+    record_decision(stats, 2, 20, 0.0, 0.0, 0.0, tabela)
     assert stats['DECISIONS']['2']['policy_changes'] == 1
 
     tabela[0][2] = 2.0                      # bigger, but still action 2
-    record_decision(stats, 3, 30, 0.0, 0.0, tabela)
+    record_decision(stats, 3, 30, 0.0, 0.0, 0.0, tabela)
     assert stats['DECISIONS']['3']['policy_changes'] == 0
 
 
 def test_the_first_decision_has_nothing_to_have_changed_from():
     """Eight rows appearing at once is not eight changes of mind."""
     stats = empty_state_stats()
-    record_decision(stats, 1, 10, 0.0, 0.0, dict(
+    record_decision(stats, 1, 10, 0.0, 0.0, 0.0, dict(
         (linha, [0, 0, 1]) for linha in range(8)
     ))
     assert stats['DECISIONS']['1']['policy_changes'] == 0
@@ -74,7 +75,7 @@ def test_the_table_written_is_the_table_in_memory():
     """The learned policy did not survive the run at all before this."""
     tabela = {0: [1.0, 2.0, 3.0], 5: [-1.0, 0.0, 0.0]}
     stats = empty_state_stats()
-    record_decision(stats, 1, 10, 0.0, 0.0, tabela)
+    record_decision(stats, 1, 10, 0.0, 0.0, 0.0, tabela)
     assert stats['Q_TABLE'] == {'0': [1.0, 2.0, 3.0], '5': [-1.0, 0.0, 0.0]}
     assert stats['GREEDY_POLICY'] == {'0': 2, '5': 1}
 
@@ -82,15 +83,15 @@ def test_the_table_written_is_the_table_in_memory():
 def test_the_table_is_the_last_one_and_not_every_one():
     """It is overwritten each decision, so it costs a table and not a history."""
     stats = empty_state_stats()
-    record_decision(stats, 1, 10, 0.0, 0.0, {0: [1.0, 0.0, 0.0]})
-    record_decision(stats, 2, 20, 0.0, 0.0, {0: [0.0, 0.0, 9.0]})
+    record_decision(stats, 1, 10, 0.0, 0.0, 0.0, {0: [1.0, 0.0, 0.0]})
+    record_decision(stats, 2, 20, 0.0, 0.0, 0.0, {0: [0.0, 0.0, 9.0]})
     assert stats['Q_TABLE'] == {'0': [0.0, 0.0, 9.0]}
 
 
 def test_a_snapshot_does_not_alias_the_live_table():
     tabela = {0: [0.0, 0.0, 0.0]}
     stats = empty_state_stats()
-    record_decision(stats, 1, 10, 0.0, 0.0, tabela)
+    record_decision(stats, 1, 10, 0.0, 0.0, 0.0, tabela)
     tabela[0][1] = 99.0
     assert stats['Q_TABLE'] == {'0': [0.0, 0.0, 0.0]}
 
@@ -112,14 +113,14 @@ def test_recording_draws_no_random_numbers():
     stats = empty_state_stats()
     obtido = []
     for passo in range(5):
-        record_decision(stats, passo, passo, 0.0, 0.0, {0: [0, 0, 0]})
+        record_decision(stats, passo, passo, 0.0, 0.0, 0.0, {0: [0, 0, 0]})
         obtido.append(random.random())
     assert obtido == esperado
 
 
 def test_the_trace_survives_a_json_round_trip():
     stats = empty_state_stats()
-    record_decision(stats, 1, 10, 1.5, -0.25, {0: [1.0, 2.0, 3.0]})
+    record_decision(stats, 1, 10, 1.5, -0.25, 0.0, {0: [1.0, 2.0, 3.0]})
     assert json.loads(json.dumps(stats)) == stats
 
 
@@ -240,7 +241,8 @@ def test_every_decision_leaves_a_record_in_both(sim_engine, monkeypatch,
     assert len(decisoes) == 9
     for registro in decisoes.values():
         assert sorted(registro.keys()) == [
-            'asn', 'policy_changes', 'reward', 'td_error'
+            'asn', 'delta_q', 'policy_changes', 'policy_code', 'reward',
+            'td_error'
         ]
 
 
@@ -266,3 +268,71 @@ def test_the_trace_puts_both_learners_on_the_same_clock(sim_engine, monkeypatch,
 
     asns = [r['asn'] for r in sf.QLEARNING_STATS['DECISIONS'].values()]
     assert asns and all(asn == sf.engine.getAsn() for asn in asns)
+
+
+# ------------------------------------------------------ the policy as one int
+
+def test_the_policy_travels_as_one_integer():
+    """Rows in numerical order, each a digit in base the number of actions."""
+    from SimEngine.Mote.scheduling_functions.state_visits import policy_code
+    # row 0 prefers 2, row 1 prefers 0, row 2 prefers 1
+    tabela = {0: [0, 0, 1.0], 1: [1.0, 0, 0], 2: [0, 1.0, 0]}
+    assert policy_code(tabela) == 2 + 0 * 3 + 1 * 9
+
+
+def test_the_code_distinguishes_every_policy_it_can_hold():
+    """Otherwise two different policies would look like no change of mind."""
+    from SimEngine.Mote.scheduling_functions.state_visits import policy_code
+    import itertools
+    vistos = set()
+    for acoes in itertools.product(range(3), repeat=3):
+        tabela = dict(
+            (linha, [1.0 if i == a else 0.0 for i in range(3)])
+            for linha, a in enumerate(acoes)
+        )
+        vistos.add(policy_code(tabela))
+    assert len(vistos) == 27
+
+
+def test_a_level_row_reads_as_the_lowest_action_like_argmax():
+    from SimEngine.Mote.scheduling_functions.state_visits import policy_code
+    assert policy_code({0: [0.0, 0.0, 0.0]}) == 0
+    assert policy_code({}) == 0
+
+
+# ------------------------------------- the learning rate, wired into both
+
+def taxas(sf):
+    """The rate each update actually used, recovered from what was recorded."""
+    saida = []
+    for registro in sf.QLEARNING_STATS['DECISIONS'].values():
+        if registro['td_error']:
+            saida.append(registro['delta_q'] / registro['td_error'])
+    return saida
+
+
+def test_a_constant_rate_is_what_runs_get_unless_asked(sim_engine, monkeypatch,
+                                                       sf_class):
+    """Every result measured so far used a constant rate and still does."""
+    sf = agente(sim_engine, monkeypatch, sf_class)
+    assert sf.ALFA_DECAY_TAU == 0
+    for _ in range(15):
+        decide(sf)
+    usadas = taxas(sf)
+    assert usadas
+    for alfa in usadas:
+        assert alfa == pytest.approx(sf.ALFA)
+
+
+def test_a_decaying_rate_shrinks_as_a_cell_is_revisited(sim_engine, monkeypatch,
+                                                        sf_class):
+    sf = agente(sim_engine, monkeypatch, sf_class)
+    sf.ALFA_DECAY_TAU = 1
+    for _ in range(30):
+        decide(sf)
+
+    usadas = taxas(sf)
+    assert usadas
+    assert max(usadas) <= sf.ALFA + 1e-12
+    assert min(usadas) < sf.ALFA           # some cell was revisited
+    assert sf.ALFA_VISITS                  # counted per state-action pair

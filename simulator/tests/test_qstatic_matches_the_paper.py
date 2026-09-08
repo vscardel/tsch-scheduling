@@ -81,11 +81,13 @@ class _Table(object):
 
     ALFA = 0.5
     BETA = 0.9
+    ALFA_DECAY_TAU = 0          # the constant rate the paper's runs used
 
     def __init__(self):
         self.Q_table = dict((linha, [0.0, 0.0, 0.0]) for linha in range(8))
         self.QLEARNING_STATS = empty_state_stats()
         self.RECORDED_STEP = 0
+        self.ALFA_VISITS = {}
         self.engine = _Clock()
 
     return_best_q_value = QStatic.__dict__['return_best_q_value']

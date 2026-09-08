@@ -59,7 +59,8 @@
             "W_ENERGY": 1, 
             "MAX_SLOTFRAMES_BETWEEN_DECISIONS": 50, 
             "LAMBDA": 2, 
-            "LEARNED_POLICY": true
+            "LEARNED_POLICY": true, 
+            "ALFA_DECAY_TAU": 0
         }, 
         "combination": {
             "exec_numMotes": [

@@ -6,6 +6,7 @@ import SimEngine
 import netaddr
 import numpy as np
 from .. import MoteDefines as d
+from .learning_rate import step_size
 from .state_visits import (
     empty_state_stats, record_action, record_decision, record_state
 )
@@ -59,6 +60,12 @@ class SchedulingFunctionQlearningSBRC24(SchedulingFunctionBase):
         # exactly how two arms came out byte identical earlier in this
         # revision.
         self.LEARNED_POLICY = getattr(self.settings, 'LEARNED_POLICY', True)
+        # Watkins requires the learning rate to shrink; a constant one
+        # never lets the estimate settle. Zero keeps the constant rate
+        # every run so far has used, so nothing changes unless asked.
+        self.ALFA_DECAY_TAU = getattr(self.settings, 'ALFA_DECAY_TAU', 0)
+        self.ALFA_VISITS = {}
+
         # off by default: the manuscript gives the utilisation-aware removal to
         # DynQ alone. On, it runs the same rule, which is what a comparison
         # holding the heuristic constant needs.
@@ -641,7 +648,12 @@ class SchedulingFunctionQlearningSBRC24(SchedulingFunctionBase):
         temporal_difference = (
             reward + self.BETA * best_next_q - self.Q_table[curr_state][action]
         )
-        self.Q_table[curr_state][action] += self.ALFA * temporal_difference
+        alfa = step_size(
+            self.ALFA, self.ALFA_DECAY_TAU, self.ALFA_VISITS,
+            (curr_state, action)
+        )
+        delta_q = alfa * temporal_difference
+        self.Q_table[curr_state][action] += delta_q
 
         # _record_reward has already advanced the step to the decision this
         # update scores, so the trace and the cumulative reward agree.
@@ -651,6 +663,7 @@ class SchedulingFunctionQlearningSBRC24(SchedulingFunctionBase):
             asn      = self.engine.getAsn(),
             reward   = reward,
             td_error = temporal_difference,
+            delta_q  = delta_q,
             q_table  = self.Q_table,
         )
     
