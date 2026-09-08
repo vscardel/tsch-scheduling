@@ -62,8 +62,13 @@ class SchedulingFunctionQlearningSBRC24(SchedulingFunctionBase):
         # off by default: the manuscript gives the utilisation-aware removal to
         # DynQ alone. On, it runs the same rule, which is what a comparison
         # holding the heuristic constant needs.
+        # On by default, as DynQ's is. Measured both ways, the rule turned
+        # out to be what the two learners' results hang on rather than a
+        # detail, so running one with it and the other without is not a
+        # comparison of the learners. It stays a setting because the
+        # ablation a reviewer asked for needs to turn it off.
         self.SMART_CELL_REMOVAL = getattr(
-            self.settings, 'QSTATIC_SMART_CELL_REMOVAL', False
+            self.settings, 'QSTATIC_SMART_CELL_REMOVAL', True
         )
 
         # Per-mote state. Each mote runs its own Q-learning agent, so none of
@@ -432,10 +437,11 @@ class SchedulingFunctionQlearningSBRC24(SchedulingFunctionBase):
         modification made for DynQ, and adds that "otherwise, the logic of
         insertion or removal is the same as in the baseline".
 
-        QSTATIC_SMART_CELL_REMOVAL turns the utilisation rule on here too, so
-        the two learners can be compared with the heuristic held constant. It
-        is off by default, and DynQ's own SMART_CELL_REMOVAL is on by default,
-        which is why they are two settings and not one.
+        The utilisation rule is on by default here as it is in DynQ, so the
+        two learners are compared with the heuristic held constant. Without
+        it Q-static's schedule can only grow, and the four-arm ablation put
+        the whole of its measured advantage down to that. They stay two
+        settings rather than one so either can be ablated on its own.
 
         This used to compare cell_option, a list, against the bare
         d.CELLOPTION_TX string. That is never true, so every call fell through
