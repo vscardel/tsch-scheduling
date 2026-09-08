@@ -77,8 +77,16 @@ def kpis_all(inputfile):
 
     # === gather raw stats
 
+    incompletas = 0
     for line in inputfile:
-        logline = json.loads(line)
+        try:
+            logline = json.loads(line)
+        except ValueError:
+            # A worker killed mid-write leaves its last line half printed.
+            # Losing that line is right; losing every other run in the file
+            # because of it is not, and that is what raising here did.
+            incompletas += 1
+            continue
 
         # shorthands
         run_id = logline['_run_id']
@@ -196,6 +204,10 @@ def kpis_all(inputfile):
 
             allstats[run_id][mote_id]['charge_asn'] = asn
             allstats[run_id][mote_id]['charge']     = charge
+
+    if incompletas:
+        print('{0}: {1} linhas incompletas ignoradas'.format(
+            inputfile.name, incompletas))
 
     # === compute advanced motestats
 

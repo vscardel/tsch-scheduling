@@ -1120,7 +1120,16 @@ class SchedulingFunctionQlearning(SchedulingFunctionBase):
             cell_options  = cell_options,
             cell_list_len = self.DEFAULT_CELL_LIST_LEN
         )
-        assert len(cell_list) > 0
+        if not cell_list:
+            # A 6P timeout retries this request, and by the time it does the
+            # cells it meant to delete can already be gone: the transaction
+            # that timed out may have been applied at the other end, or the
+            # agent may have removed them since. There is then nothing to ask
+            # for, and asserting kills the whole run over a request that
+            # simply has no work left to do. Give up on this neighbour the way
+            # the retry limit does.
+            self.retry_count[parent] = -1
+            return
 
         # prepare callback
         callback = self._create_delete_request_callback(
