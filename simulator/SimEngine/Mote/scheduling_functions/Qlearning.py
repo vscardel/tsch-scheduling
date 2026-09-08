@@ -61,6 +61,25 @@ class SchedulingFunctionQlearning(SchedulingFunctionBase):
             self.settings, 'MAX_SLOTFRAMES_BETWEEN_DECISIONS', 50
         )
 
+        # What makes the agent decide. 'event', the default and what the
+        # manuscript describes, decides when a cell is added or removed, which
+        # is the tight feedback loop of section 6.4. 'cells' decides every
+        # CELLS_BETWEEN_DECISIONS cells that elapse, which is what MSF and
+        # Q-static do.
+        #
+        # The difference is not a constant. The event trigger is driven by the
+        # agent's own actions, so it falls quiet exactly when the schedule
+        # settles, and the slotframe floor is then all that is left. The cell
+        # trigger is driven by the radio, which never stops. Measured over the
+        # factorial: 136 decisions per mote against Q-static's 1048.
+        self.DECISION_TRIGGER = getattr(
+            self.settings, 'DECISION_TRIGGER', 'event'
+        )
+        self.CELLS_BETWEEN_DECISIONS = getattr(
+            self.settings, 'CELLS_BETWEEN_DECISIONS', 100
+        )
+        self.cells_since_decision = 0
+
         # Reward weights. The four terms are all shares of something, so equal
         # weights are the neutral starting point and need no justification
         # beyond that. A configuration may override any of them, which is what
@@ -195,6 +214,30 @@ class SchedulingFunctionQlearning(SchedulingFunctionBase):
 
         self.adapt_to_traffic([d.CELLOPTION_TX], None, 'timer')
 
+    def _count_cell_towards_next_decision(self, cell):
+        """Decide every CELLS_BETWEEN_DECISIONS cells, when asked to.
+
+        Off by default, so the agent keeps the event driven trigger the
+        manuscript describes and every result collected so far stands.
+        """
+        if self.DECISION_TRIGGER != 'cells':
+            return
+        if self._is_minimal_cell(cell):
+            return
+        self.cells_since_decision += 1
+        if self.cells_since_decision < self.CELLS_BETWEEN_DECISIONS:
+            return
+        self.cells_since_decision = 0
+
+        preferred_parent = self.mote.rpl.getPreferredParent()
+        if preferred_parent is None:
+            return
+        if self._sixp_busy_with(preferred_parent):
+            # 6P allows one transaction per peer at a time, and the cell being
+            # negotiated triggers a decision of its own when it lands
+            return
+        self.adapt_to_traffic([d.CELLOPTION_TX], cell, 'cells')
+
     def _sixp_busy_with(self, neighbor):
         """Whether a 6P transaction with this neighbour is already under way."""
         mine = self.mote.get_mac_addr()
@@ -280,6 +323,7 @@ class SchedulingFunctionQlearning(SchedulingFunctionBase):
                 )
 
             self.slotframes_since_decision = 0
+            self.cells_since_decision = 0
             self.last_state_number = state_number
             self.last_action = action
 
@@ -329,6 +373,7 @@ class SchedulingFunctionQlearning(SchedulingFunctionBase):
         if self.mote.dagRoot:
             return
         self._record_packet_age(sent_packet)
+        self._count_cell_towards_next_decision(cell)
         # if not self._is_minimal_cell(cell):
         #     # self.TX_CELLS_PASSED = self.TX_CELLS_PASSED + 1
         #     # if bool(sent_packet): 
