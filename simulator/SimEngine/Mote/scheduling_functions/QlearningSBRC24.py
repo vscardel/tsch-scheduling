@@ -44,6 +44,9 @@ class SchedulingFunctionQlearningSBRC24(SchedulingFunctionBase):
         self.MAX_TX_CELLS_PASSED = self.settings.MAX_TX_CELLS_PASSED
         self.MAX_RX_CELLS_PASSED = self.settings.MAX_RX_CELLS_PASSED
         self.EPSLON_THRESHOLD = self.settings.EPSLON_THRESHOLD
+        # tau_C of Equation 9, as a fraction of a full battery. The manuscript
+        # does not publish any of the three thresholds.
+        self.TAU_CHARGE = getattr(self.settings, 'QSTATIC_TAU_CHARGE', 0.5)
 
         # Per-mote state. Each mote runs its own Q-learning agent, so none of
         # this may live on the class: a mutable class attribute is a single
@@ -451,8 +454,17 @@ class SchedulingFunctionQlearningSBRC24(SchedulingFunctionBase):
         return 0
     
     def discretize_energy(self,energy_left):
+        """Equation 9: one above tau_C, zero below.
+
+        energy_left is now the fraction of the battery still there, so the old
+        absolute threshold of 500 does not carry over. The manuscript never
+        publishes tau_C, saying only that the thresholds "were empirically
+        obtained", so it is a setting with an arbitrary default rather than a
+        constant pretending to be derived. It belongs in the Bayesian search
+        alongside the other hyperparameters.
+        """
         average_energy_ratio = self._compute_average_energy_ratio(energy_left)
-        if energy_left > 500:
+        if energy_left > self.TAU_CHARGE:
             return 1
         return 0
 
@@ -471,23 +483,37 @@ class SchedulingFunctionQlearningSBRC24(SchedulingFunctionBase):
         ]
     
 
+    def _spent_charge(self):
+        """Charge drawn from the battery since boot, in uC.
+
+        The radio counters only ever grow, so this is a plain reading of them
+        against the simulator's own cost per operation.
+        """
+        stats = self.mote.radio.stats
+        return (
+            stats['idle_listen']    * d.CHARGE_IdleListen_uC +
+            stats['tx_data_rx_ack'] * d.CHARGE_TxDataRxAck_uC +
+            stats['rx_data_tx_ack'] * d.CHARGE_RxDataTxAck_uC +
+            stats['tx_data']        * d.CHARGE_TxData_uC +
+            stats['rx_data']        * d.CHARGE_RxData_uC +
+            stats['sleep']          * d.CHARGE_Sleep_uC
+        )
+
     def _compute_charge(self):
-        charge = 0
-        charge =  self.mote.radio.stats['idle_listen'] * d.CHARGE_IdleListen_uC
-        charge += self.mote.radio.stats['tx_data_rx_ack'] * d.CHARGE_TxDataRxAck_uC
-        charge += self.mote.radio.stats['rx_data_tx_ack'] * d.CHARGE_RxDataTxAck_uC
-        charge += self.mote.radio.stats['tx_data'] * d.CHARGE_TxData_uC
-        charge += self.mote.radio.stats['rx_data'] * d.CHARGE_RxData_uC
-        charge += self.mote.radio.stats['sleep'] * d.CHARGE_Sleep_uC
-        current_asn = self.engine.getAsn()
-        asn_synced = self.mote.tsch.asnLastSync
-        #tempo em s que o dispositivo esta sincronizado
-        denominator = (float(current_asn-asn_synced) * self.settings.tsch_slotDuration)
-        if denominator != 0:
-            avg_current_uA = charge/denominator
-        else:
-            avg_current_uA = 0
-        return avg_current_uA
+        """C_h, the remaining battery, as a fraction of a full one.
+
+        q_static.tex calls this factor "the device's remaining battery level".
+        It used to return the charge drawn since boot divided by the time since
+        the last resynchronisation, and tsch.py resets asnLastSync on every
+        received frame, so the numerator covered the whole run while the
+        denominator covered the seconds since the last packet. The value
+        inflated and grew, the threshold was met from warm-up onwards, and the
+        third state bit was pinned to one: across the factorial, 99.1% of
+        1571457 decisions landed on a row with that bit set, which left the
+        agent four reachable rows out of eight.
+        """
+        remaining = self.INITIAL_REMAINING_BATTERY - self._spent_charge()
+        return max(0.0, remaining / float(self.INITIAL_REMAINING_BATTERY))
 
     def map_discrete_state_to_number(self, discrete_state):
         """The row of the Q-table for an already discretised state."""

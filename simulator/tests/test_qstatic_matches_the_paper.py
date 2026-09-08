@@ -123,3 +123,73 @@ def test_the_desirable_state_is_row_one():
     """The code used to spell S_f as the literal 1."""
     mapear = QStatic.__dict__['map_discrete_state_to_number']
     assert mapear(QStatic, QStatic.DESIRABLE_STATE) == 1
+
+
+# ----------------------------------------------------------- the charge factor
+
+class _Radio(object):
+    def __init__(self, idle_listen=0):
+        self.stats = {
+            'idle_listen': idle_listen, 'tx_data_rx_ack': 0,
+            'rx_data_tx_ack': 0, 'tx_data': 0, 'rx_data': 0, 'sleep': 0,
+        }
+
+
+class _Battery(object):
+    """A learner reduced to the charge factor and what it reads."""
+
+    INITIAL_REMAINING_BATTERY = QStatic.INITIAL_REMAINING_BATTERY
+    TAU_CHARGE = 0.5
+
+    def __init__(self, idle_listen=0):
+        self.mote = type('M', (), {'radio': _Radio(idle_listen)})()
+
+    _spent_charge = QStatic.__dict__['_spent_charge']
+    _compute_charge = QStatic.__dict__['_compute_charge']
+    _compute_average_energy_ratio = staticmethod(lambda valor: valor)
+    discretize_energy = QStatic.__dict__['discretize_energy']
+
+
+def test_a_fresh_mote_has_a_full_battery():
+    assert _Battery(idle_listen=0)._compute_charge() == pytest.approx(1.0)
+
+
+def test_the_battery_falls_as_charge_is_drawn():
+    antes = _Battery(idle_listen=1000)._compute_charge()
+    depois = _Battery(idle_listen=2000)._compute_charge()
+    assert depois < antes < 1.0
+
+
+def test_the_battery_never_goes_negative():
+    """The simulator will happily run a mote past its own battery."""
+    esgotado = _Battery(idle_listen=10 ** 12)
+    assert esgotado._compute_charge() == 0.0
+
+
+def test_the_charge_factor_does_not_depend_on_resynchronisation():
+    """It used to divide charge since boot by the time since the last sync,
+    and tsch resets that on every received frame, so the value inflated and
+    grew and the third state bit was pinned to one for the whole run.
+
+    _Battery carries a radio and nothing else: no tsch, no engine. Reaching
+    for either would raise here rather than return a number.
+    """
+    bateria = _Battery(idle_listen=1000)
+    assert not hasattr(bateria, 'engine')
+    assert not hasattr(bateria.mote, 'tsch')
+    assert 0.0 < bateria._compute_charge() < 1.0
+
+
+def test_the_bit_can_be_zero_and_one():
+    """Pinned at one, the state space is four rows out of eight."""
+    cheia = _Battery(idle_listen=0)
+    vazia = _Battery(idle_listen=10 ** 12)
+    assert cheia.discretize_energy(cheia._compute_charge()) == 1
+    assert vazia.discretize_energy(vazia._compute_charge()) == 0
+
+
+def test_the_threshold_is_a_setting_not_a_constant():
+    """The manuscript never publishes tau_C, so it must be tunable."""
+    import inspect
+    fonte = inspect.getsource(QStatic.__init__)
+    assert "'QSTATIC_TAU_CHARGE'" in fonte
