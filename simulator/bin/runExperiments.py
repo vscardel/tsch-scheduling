@@ -1,6 +1,7 @@
 import argparse
 import json
 import os
+import glob
 import shutil
 import random
 import itertools
@@ -31,25 +32,71 @@ def convert_types(obj):
 # threshold is a real parameter for it. DynQ is epsilon-greedy: epsilon is the
 # chance of exploring and there is no threshold to cross, so searching it there
 # would spend evaluations on a dimension that changes nothing.
+# The ranges are wider than the ones the submitted results came from. A first
+# pass over them put the full DynQ at ALFA 0.9 and EPSLON_DECAY_RATE 0.09, both
+# sitting exactly on their old upper bound, with a third configuration close
+# behind on ALFA and three of four near the cap on the decay. An optimum on the
+# edge of the box is the box talking, not the method, and it would have gone
+# into the hyperparameter table for a reviewer to notice.
+#
+# The old bounds were inherited from the version that still had
+# EPSLON_THRESHOLD, where the decay governed how long until the switch flipped.
+# Under epsilon-greedy the decay governs how long the agent keeps drawing at
+# random, and wanting to leave that phase sooner is a reasonable thing for it
+# to want.
 SEARCH_SPACE = {
     'Qlearning': [
-        ("ALFA",              (0.1, 0.9)),
-        ("BETA",              (0.1, 0.9)),
-        ("EPSLON_DECAY_RATE", (0.01, 0.09)),
-        ("MIN_EPSLON",        (0.05, 0.1)),
+        ("ALFA",              (0.05, 0.99)),
+        ("BETA",              (0.05, 0.99)),
+        ("EPSLON_DECAY_RATE", (0.005, 0.30)),
+        ("MIN_EPSLON",        (0.01, 0.30)),
     ],
     'QlearningSBRC24': [
-        ("ALFA",              (0.1, 0.9)),
-        ("BETA",              (0.1, 0.9)),
-        ("EPSLON_DECAY_RATE", (0.01, 0.09)),
-        ("MIN_EPSLON",        (0.05, 0.1)),
-        ("EPSLON_THRESHOLD",  (0.5, 0.7)),
+        ("ALFA",              (0.05, 0.99)),
+        ("BETA",              (0.05, 0.99)),
+        ("EPSLON_DECAY_RATE", (0.005, 0.30)),
+        ("MIN_EPSLON",        (0.01, 0.30)),
+        ("EPSLON_THRESHOLD",  (0.30, 0.90)),
+    ],
+    # RL-SF gets the same budget and the same number of dimensions as DynQ, so
+    # neither method is the only one that was tuned. Its three reward weights
+    # are left out for the same reason DynQ's are: searching the reward changes
+    # what the agent is being asked to do, not how well it does it.
+    'RLSF': [
+        ("RLSF_ALFA",          (0.05, 0.99)),
+        ("RLSF_BETA",          (0.05, 0.99)),
+        ("RLSF_EPSILON_DECAY", (0.95, 0.9999)),
+        ("RLSF_EPSILON_END",   (0.01, 0.30)),
     ],
 }
 
 def search_space(sched_function):
     """The names and ranges the search varies for a scheduling function."""
     return SEARCH_SPACE.get(sched_function, SEARCH_SPACE['QlearningSBRC24'])
+
+
+DEFAULT_NUM_EVALUATIONS   = 40
+DEFAULT_NUM_RANDOM_STARTS = 10
+
+
+def optimisation_budget(num_evaluations, num_random_starts):
+    """How many evaluations the search gets, and how many of those are random.
+
+    skopt samples at random for its first n_random_starts evaluations and only
+    then fits the surrogate. If n_calls equals that number every evaluation is
+    a draw, and the search is a random search wearing the name of Bayesian
+    optimisation. Returns the pair, or raises if the budget buys no guided
+    evaluation at all.
+    """
+    n_random_starts = num_random_starts or DEFAULT_NUM_RANDOM_STARTS
+    n_calls = num_evaluations or DEFAULT_NUM_EVALUATIONS
+    if n_calls <= n_random_starts:
+        raise ValueError(
+            'n_calls ({0}) must exceed n_random_starts ({1}), otherwise no '
+            'evaluation is guided by the model and this is a random '
+            'search.'.format(n_calls, n_random_starts)
+        )
+    return n_calls, n_random_starts
 
 parameters_position = []
 
@@ -100,15 +147,58 @@ def load_config():
         settings = json.loads(json_string)
     return settings
 
+def evaluations_path(output_folder):
+    return './{0}_evaluations.json'.format(output_folder)
+
+
+def record_evaluation(output_folder, parameters, value):
+    """Append one finished evaluation, so a lost run resumes instead of restarting.
+
+    Every evaluation is a full set of simulations, so a run that dies two
+    thirds of the way through used to throw away hours. Two configurations
+    never finished at all: each attempt met the same accumulated risk of
+    stopping, and starting over reset the progress but not the risk.
+    """
+    registro = load_evaluations(output_folder)
+    registro.append({
+        'x': [float(p) for p in parameters],
+        'y': float(value),
+    })
+    with open(evaluations_path(output_folder), 'w') as f:
+        json.dump(registro, f)
+
+
+def load_evaluations(output_folder):
+    caminho = evaluations_path(output_folder)
+    if not os.path.exists(caminho):
+        return []
+    try:
+        with open(caminho, 'r') as f:
+            return json.load(f)
+    except Exception:
+        # a half-written file is worth less than starting the record over
+        return []
+
+
+def cell_name(factor_combination, empty_is_learner=False):
+    """The folder a cell of the factorial writes to."""
+    if factor_combination:
+        return '_'.join(factor_combination)
+    return 'sem_estado' if empty_is_learner else 'baseline'
+
+
 def load_optimal_parameters(factor_combination):
-    paramaters = None
-    parameters_list = [None] * len(parameters_position)
+    """Every hyperparameter the file holds, by name.
+
+    It used to return a positional list built from parameters_position, which
+    is the search space of whatever -sf the run was given. The factorial runs
+    with -sf Qlearning, which has four hyperparameters, so the Q-static cell
+    silently lost its fifth: EPSLON_THRESHOLD never left the file, and that
+    cell ran on config.json's 0.58 instead of the 0.30 the optimisation found.
+    Reading by name cannot drop a parameter the file bothered to record.
+    """
     with open('./{0}_parameters.json'.format(factor_combination), 'r') as f:
-        parameters = json.load(f)
-        # for compatibility
-        for position, name in enumerate(parameters_position):
-            parameters_list[position] = parameters[name]
-    return parameters_list
+        return json.load(f)
 
 def configure_settings(settings, parameters):
     settings['settings']['combination']['exec_numMotes'] = args.combinations
@@ -125,11 +215,15 @@ def configure_settings(settings, parameters):
     settings['log_directory_name']= args.output_folder
     settings['get_sync_node_info'] = args.sync_required
 
-    # Configure simulator with the parameters
+    # Configure simulator with the parameters. The optimiser hands over a
+    # positional list, in the order of parameters_position; a parameters file
+    # hands over a mapping, and every key in it is applied.
     if parameters:
-        for position, parameter_name in enumerate(parameters_position):
-            parameter_value = parameters[position]
-            settings['settings']['regular'][parameter_name] = parameter_value
+        if isinstance(parameters, dict):
+            settings['settings']['regular'].update(parameters)
+        else:
+            for position, parameter_name in enumerate(parameters_position):
+                settings['settings']['regular'][parameter_name] = parameters[position]
     return settings
 
 
@@ -138,21 +232,28 @@ def save_curr_run_config(config_name, settings):
         json.dump(settings, f, indent=4)
 
 def load_kpis(folder_path, num_motes):
-    kpis = None
-    for tentativa in range(3):
+    """Every run's KPIs, merged and keyed by run id.
+
+    This used to open output_cpu0.dat.kpi and nothing else. runSim gives each
+    core its own output file, so with N cores it read one run and silently
+    discarded the other N-1: the score that drove the optimisation and the
+    factorial analysis was computed from a single run while the config asked
+    for ten, and the runs that cost the most time were the ones thrown away.
+
+    It also explains why every experiment so far had to be pinned to one core
+    to be trustworthy, which is the slowest way to run any of them.
+    """
+    kpis = {}
+    arquivos = sorted(glob.glob(os.path.join(folder_path, '*.dat.kpi')))
+    for caminho in arquivos:
         try:
-            with open(
-                os.path.join(
-                    folder_path,
-                    'output_cpu0.dat.kpi'.format(num_motes)
-                )
-            , 'r') as f:
-                json_string = f.read()
-                kpis = json.loads(json_string)
+            with open(caminho, 'r') as f:
+                for run_id, run in json.loads(f.read()).items():
+                    kpis[run_id] = run
         except Exception as e:
             print(e)
-            print("Something went wrong reading KPIs on try {0}".format(tentativa))
-    return kpis
+            print("Something went wrong reading {0}".format(caminho))
+    return kpis or None
 
 def compute_run_lifetime(run_kpis):
     """Mean battery lifetime over the motes of one run, in years.
@@ -251,8 +352,11 @@ def efficience_function(parameters):
         remove_results_folder(curr_output_folder_path)
         if mean_scores:
             ALL_SCORES.append(mean_scores)
+            record_evaluation(args.output_folder, parameters, mean_scores)
             return mean_scores
+        record_evaluation(args.output_folder, parameters, MAX_FUNCTION_VALUE)
         return MAX_FUNCTION_VALUE
+    record_evaluation(args.output_folder, parameters, MAX_FUNCTION_VALUE)
     return MAX_FUNCTION_VALUE
 
 if __name__ == '__main__':
@@ -269,10 +373,39 @@ if __name__ == '__main__':
     parser.add_argument('-af','--aquisition_function', type=str, help='The aquisition function used in gp_minimize', required=False)
     parser.add_argument('-sr','--sync_required', type=bool, help='if sync info is obtained in simulation', required=False)
     parser.add_argument('-nrs','--num_random_starts', type=int, help='num random starts of gp.minimize', required=False)
+    parser.add_argument('-rs','--random_state', type=int, default=1, help='seed of the search itself, so the optimisation reproduces', required=False)
     parser.add_argument('-cc','--conn_class', type=str, help='connectivity_matrix', required=True)
     parser.add_argument('-nslots','--num_slots', type=int, help='number of slotframes (time) of simulation', required=True)
     parser.add_argument('-is_min','--experiment_type', type=str, help='determines the time of experiment (minimization or 2^k)', required=True)
 
+    parser.add_argument(
+        '--empty-cell-learner', action='store_true',
+        help=(
+            'run the empty cell as the learner with no state factors, under '
+            'the name sem_estado, instead of as MSF under the name baseline. '
+            'The factorial needs this: with MSF in that cell, a main effect '
+            'compares a state factor against another scheduling function.'
+        )
+    )
+    parser.add_argument(
+        '--cells',
+        help=(
+            'run only these cells of the factorial, by folder name, comma '
+            'separated. Without it every cell runs, which is what the '
+            'factorial itself wants and what a control arm does not.'
+        )
+    )
+    parser.add_argument(
+        '--tag',
+        help=(
+            'suffix for the output folder and the parameters file, so a '
+            'control arm can reuse a cell without overwriting it. With '
+            '--tag control, cell traffic_queue_charge writes to '
+            'traffic_queue_charge_control and reads its hyperparameters from '
+            'traffic_queue_charge_control_parameters.json, falling back to '
+            'the cell\'s own file.'
+        )
+    )
     parser.add_argument(
         '-fc', '--factor_combinations',
         help='List of factor combinations',
@@ -292,9 +425,34 @@ if __name__ == '__main__':
         print('searching {0} parameters: {1}'.format(
             len(parameters_position), ', '.join(parameters_position)))
 
+        try:
+            n_calls, n_random_starts = optimisation_budget(
+                args.num_evaluations, args.num_random_starts
+            )
+        except ValueError as erro:
+            raise SystemExit(str(erro))
+        print('{0} evaluations, {1} of them random, {2} guided'.format(
+            n_calls, n_random_starts, n_calls - n_random_starts))
+
+        anteriores = load_evaluations(args.output_folder)
+        if anteriores:
+            x0 = [e['x'] for e in anteriores]
+            y0 = [e['y'] for e in anteriores]
+            n_calls = max(1, n_calls - len(anteriores))
+            n_random_starts = max(0, n_random_starts - len(anteriores))
+            print('resuming with {0} evaluations already done, {1} to go'.format(
+                len(anteriores), n_calls))
+        else:
+            x0 = y0 = None
+
         res = gp_minimize(efficience_function,
                         [faixa for _, faixa in espaco],
-                        n_calls=10
+                        n_calls          = n_calls,
+                        n_random_starts  = n_random_starts,
+                        acq_func         = args.aquisition_function or 'gp_hedge',
+                        random_state     = args.random_state,
+                        x0               = x0,
+                        y0               = y0,
                     )
 
         time.sleep(30)
@@ -346,16 +504,42 @@ if __name__ == '__main__':
         all_combinations.sort(key=len)
         all_combinations.reverse()
         all_combinations.insert(0,['qlearningSBRC24'])
+
+        pedidas = (
+            [c.strip() for c in args.cells.split(',') if c.strip()]
+            if args.cells else None
+        )
+        if pedidas:
+            conhecidas = set(
+                cell_name(c, args.empty_cell_learner) for c in all_combinations
+            )
+            desconhecidas = [c for c in pedidas if c not in conhecidas]
+            if desconhecidas:
+                raise ValueError(
+                    'no such cell: {0}. The cells are {1}'.format(
+                        ', '.join(desconhecidas), ', '.join(sorted(conhecidas))
+                    )
+                )
+            all_combinations = [
+                c for c in all_combinations
+                if cell_name(c, args.empty_cell_learner) in pedidas
+            ]
+
         # run each combination
         for factor_combination in all_combinations:
 
+            cell = cell_name(factor_combination, args.empty_cell_learner)
+            output_folder = '{0}_{1}'.format(cell, args.tag) if args.tag else cell
+
             # empty combination
             if not factor_combination:
-                output_folder = 'baseline'
                 parameters_list = []
             else:
-                output_folder = '_'.join(factor_combination)
-                parameters_list = load_optimal_parameters('_'.join(factor_combination))
+                parameters_list = load_optimal_parameters(
+                    output_folder if args.tag and os.path.exists(
+                        './{0}_parameters.json'.format(output_folder)
+                    ) else cell
+                )
 
             config_name = 'config_{0}.json'.format(output_folder)
             settings = load_config()
@@ -364,8 +548,8 @@ if __name__ == '__main__':
             settings['settings']['regular']['factorial_combinations'] = factor_combination
             settings['settings']['regular']['STATE_SIZE'] = 2**(len(factor_combination))
             
-            #baseline runs MSF
-            if not factor_combination:
+            #baseline runs MSF, unless the empty cell was asked to learn
+            if not factor_combination and not args.empty_cell_learner:
                 settings['settings']['regular']['sf_class'] = 'MSF'
             elif factor_combination == ['qlearningSBRC24']:
                 settings['settings']['regular']['sf_class'] = 'QlearningSBRC24'

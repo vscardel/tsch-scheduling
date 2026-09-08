@@ -6,6 +6,7 @@ import SimEngine
 import netaddr
 import numpy as np
 from .. import MoteDefines as d
+from .state_visits import empty_state_stats, record_action, record_state
 from math import e
 
 from SimEngine.Mote.sfBase import SchedulingFunctionBase
@@ -53,6 +54,9 @@ class SchedulingFunctionQlearningSBRC24(SchedulingFunctionBase):
         self.EPSLON = None
         self.EPISODE = 0
         self.Q_table = dict()
+        # the same per-mote counters DynQ keeps, so the two learners' visited
+        # states can be put side by side rather than described one at a time
+        self.QLEARNING_STATS = empty_state_stats()
         self.cumulative_reward = 0
         self.TX_CELLS_PASSED = 0
         self.RX_CELLS_PASSED = 0
@@ -149,7 +153,6 @@ class SchedulingFunctionQlearningSBRC24(SchedulingFunctionBase):
 
                 self.num_packets_in_current_episode = 0
 
-                print(next_state)
                 is_random = False
                 if self.EPSLON < self.EPSLON_THRESHOLD:
                     action = self.return_best_q_action(self.map_state_to_number(self.current_state))
@@ -162,13 +165,22 @@ class SchedulingFunctionQlearningSBRC24(SchedulingFunctionBase):
                 discrete_queue = discrete_variables[1]
                 discrete_energy_left = discrete_variables[2]
 
+                # the row the decision above read, rebuilt from the
+                # discretisation that was already done rather than by calling
+                # map_state_to_number again: every discretise call appends to
+                # the moving average buffers and moves self.TRAFFIC, so a
+                # second one would change the run it is supposed to measure
+                state_number = int('{0}{1}{2}'.format(
+                    discrete_traffic, discrete_queue, discrete_energy_left), 2)
+                record_state(self.QLEARNING_STATS, state_number)
+                record_action(
+                    self.QLEARNING_STATS, state_number, action,
+                    not (self.EPSLON < self.EPSLON_THRESHOLD)
+                )
+
                 add_cells =  (discrete_queue) + (discrete_traffic) + (discrete_energy_left)  
                 remove_cells =  (1-discrete_queue) + (1-discrete_traffic) + (1-discrete_energy_left)  
                 
-                print('EPSLON')
-                print(self.EPSLON)
-                print('action')
-                print(action)
 
                 if action == 0:
                     self.sixp_interface_add(
@@ -402,14 +414,12 @@ class SchedulingFunctionQlearningSBRC24(SchedulingFunctionBase):
 
     def discretize_queue_ratio(self,queue_ratio):
         average_queue_ratio = self._compute_queue_average_ratio(queue_ratio)
-        print(average_queue_ratio)
         if queue_ratio >= 0.12:
             return 1
         return 0
     
     def discretize_traffic(self,traffic):
         average_traffic = self._compute_average_traffic(traffic)
-        print(average_traffic)
         if traffic >= 3:
             return 1
         return 0

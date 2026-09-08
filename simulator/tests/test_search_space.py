@@ -48,3 +48,74 @@ def test_every_range_is_a_pair_of_bounds():
 def test_an_unknown_function_gets_the_full_space():
     # nao vale calar a dimensao para quem nao sabemos como decide
     assert nomes('SomethingElse') == nomes('QlearningSBRC24')
+
+
+def test_rlsf_has_the_same_number_of_dimensions_as_dynq():
+    """Neither method should be the only one that was tuned."""
+    assert len(nomes('RLSF')) == len(nomes('Qlearning'))
+
+
+def test_rlsf_searches_its_own_settings():
+    """The names go straight into the config, so they must match RLSF.py."""
+    assert nomes('RLSF') == [
+        'RLSF_ALFA', 'RLSF_BETA', 'RLSF_EPSILON_DECAY', 'RLSF_EPSILON_END'
+    ]
+
+
+def test_no_search_touches_the_reward_weights():
+    """Searching the reward changes the question, not the answer."""
+    for sf in ('Qlearning', 'QlearningSBRC24', 'RLSF'):
+        for nome in nomes(sf):
+            assert not nome.startswith('W_')
+            assert 'THETA' not in nome
+
+
+def test_budget_defaults_leave_most_evaluations_to_the_model():
+    n_calls, n_random = rx.optimisation_budget(None, None)
+    assert n_calls > n_random
+    assert n_calls - n_random >= 2 * n_random
+
+
+def test_budget_refuses_a_pure_random_search():
+    """n_calls equal to n_random_starts is what the published run did."""
+    import pytest
+    with pytest.raises(ValueError):
+        rx.optimisation_budget(10, 10)
+    with pytest.raises(ValueError):
+        rx.optimisation_budget(5, 10)
+
+
+def test_budget_honours_what_is_asked_for():
+    assert rx.optimisation_budget(30, 8) == (30, 8)
+
+
+# what a first pass over the old, narrower box returned; two of these sat
+# exactly on their upper bound, which is the box talking and not the method
+OTIMOS_DA_CAIXA_ANTIGA = {
+    'ALFA': 0.9,
+    'BETA': 0.5625998437793637,
+    'EPSLON_DECAY_RATE': 0.09,
+    'MIN_EPSLON': 0.09002897521343009,
+}
+
+
+def test_the_old_optima_are_no_longer_on_a_bound():
+    faixas = dict(rx.search_space('Qlearning'))
+    for nome, valor in OTIMOS_DA_CAIXA_ANTIGA.items():
+        baixo, alto = faixas[nome]
+        assert baixo < valor < alto, (
+            '{0}={1} still sits on the edge of [{2}, {3}]'.format(
+                nome, valor, baixo, alto)
+        )
+
+
+def test_the_learners_share_the_ranges_they_have_in_common():
+    """Neither method may search a wider box than the other."""
+    dynq = dict(rx.search_space('Qlearning'))
+    static = dict(rx.search_space('QlearningSBRC24'))
+    for nome in dynq:
+        assert dynq[nome] == static[nome]
+
+    rlsf = dict(rx.search_space('RLSF'))
+    assert rlsf['RLSF_ALFA'] == dynq['ALFA']
+    assert rlsf['RLSF_BETA'] == dynq['BETA']

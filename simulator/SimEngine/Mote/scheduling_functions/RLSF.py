@@ -7,6 +7,7 @@ import random
 from builtins import range
 
 from .. import MoteDefines as d
+from .state_visits import empty_state_stats, record_action, record_state
 from .MSF import SchedulingFunctionMSF
 
 
@@ -86,11 +87,15 @@ class SchedulingFunctionRLSF(SchedulingFunctionMSF):
         self.cells_used = 0
         self.dropped_a_packet = False
 
-        # for the record, so a run can be read back without re-deriving it
+        # for the record, so a run can be read back without re-deriving it.
+        # The name is the one SimEngine writes out for every learner, so this
+        # baseline's visited states land beside DynQ's and Q-static's.
         self.RLSF_STATS = {
             'DECISIONS': {},
             'EPSILON': {},
         }
+        self.RLSF_STATS.update(empty_state_stats())
+        self.QLEARNING_STATS = self.RLSF_STATS
         self.decision_count = 0
 
     # ======================= public ==========================================
@@ -100,8 +105,20 @@ class SchedulingFunctionRLSF(SchedulingFunctionMSF):
         if self.mote.dagRoot:
             return
 
+        # This fires for every mote on every slotframe, including motes whose
+        # scheduling function has not started yet and motes that desynchronised
+        # and had stop() uninstall their slotframes. MSF never notices because
+        # its own hook here does nothing. Without the schedule there is nothing
+        # to negotiate against, and last_state is dropped so the next decision
+        # does not credit a reward earned across the gap.
+        if self.mote.tsch.get_slotframe(
+                self.SLOTFRAME_HANDLE_NEGOTIATED_CELLS) is None:
+            self.last_state = None
+            return
+
         preferred_parent = self.mote.rpl.getPreferredParent()
         if preferred_parent is None:
+            self.last_state = None
             return
 
         state = self._observe_state()
@@ -139,6 +156,21 @@ class SchedulingFunctionRLSF(SchedulingFunctionMSF):
             cell, sent_packet
         )
 
+    def indication_rx_cell_elapsed(self, cell, received_packet):
+        """Treat a packet that has been emptied as no packet at all.
+
+        mote.drop_packet deletes every key from the packet it drops, so what
+        arrives here can be {}. MSF guards for None and then reads
+        received_packet['mac'], and {} is not None. Both readings agree that
+        nothing usable arrived, and bool({}) is already False, so normalising
+        to None keeps MSF's own "was the cell used" answer unchanged.
+        """
+        if received_packet is not None and u'mac' not in received_packet:
+            received_packet = None
+        super(SchedulingFunctionRLSF, self).indication_rx_cell_elapsed(
+            cell, received_packet
+        )
+
     def indication_queue_full(self):
         """The TX queue overflowed, which is the drop term of Eq. 3."""
         self.dropped_a_packet = True
@@ -163,15 +195,20 @@ class SchedulingFunctionRLSF(SchedulingFunctionMSF):
 
     def _choose_action(self, state):
         """Epsilon-greedy over the row, with the exponential decay of Eq. 8."""
-        if random.random() < self.epsilon:
-            return random.randrange(self.MAX_CELLS)
-        row = self.q_table[state]
-        best = max(row)
-        # ties are broken at random rather than by index, otherwise action 0
-        # wins every tie and the untried actions of a fresh row never run
-        return random.choice(
-            [i for i, value in enumerate(row) if value == best]
-        )
+        explored = random.random() < self.epsilon
+        if explored:
+            action = random.randrange(self.MAX_CELLS)
+        else:
+            row = self.q_table[state]
+            best = max(row)
+            # ties are broken at random rather than by index, otherwise action 0
+            # wins every tie and the untried actions of a fresh row never run
+            action = random.choice(
+                [i for i, value in enumerate(row) if value == best]
+            )
+        record_state(self.RLSF_STATS, state)
+        record_action(self.RLSF_STATS, state, action, explored)
+        return action
 
     def _update_q_table(self, state, action, reward, next_state):
         """Q <- (1-a)Q + a(r + B max Q'), the standard update.
@@ -262,6 +299,33 @@ class SchedulingFunctionRLSF(SchedulingFunctionMSF):
                 num_cells    = current - target,
                 cell_options = self.TX_CELL_OPT
             )
+
+    def _request_deleting_cells(self, neighbor, num_cells, cell_options):
+        """Delete, unless there is nothing left to delete.
+
+        MSF asserts that the cell list it is about to advertise is not empty.
+        Its own retry path can break that: a DELETE that times out is reissued
+        from the timeout callback with the original count, and by then the
+        cells may already be gone. MSF deletes one cell at a time and only when
+        it holds more than one, so it practically never reaches the case; RL-SF
+        renegotiates every slotframe and reaches it within minutes.
+
+        This bails the way MSF's own add path bails when the schedule is full,
+        releasing the retry counter so the neighbour does not stay marked busy
+        for the rest of the run.
+        """
+        occupied = [
+            cell for cell in self.mote.tsch.get_cells(
+                neighbor, self.SLOTFRAME_HANDLE_NEGOTIATED_CELLS
+            ) if cell.options == cell_options
+        ]
+        if not occupied:
+            self.retry_count[neighbor] = -1
+            return
+
+        super(SchedulingFunctionRLSF, self)._request_deleting_cells(
+            neighbor, num_cells, cell_options
+        )
 
     def _record_decision(self, state, action, target, current):
         self.decision_count += 1

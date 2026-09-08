@@ -10,6 +10,7 @@ import random
 import SimEngine
 
 from .. import MoteDefines as d
+from .state_visits import empty_state_stats, record_action, record_state
 from math import factorial as fat
 from math import e
 from pprint import pprint
@@ -60,10 +61,34 @@ class SchedulingFunctionQlearning(SchedulingFunctionBase):
             self.settings, 'MAX_SLOTFRAMES_BETWEEN_DECISIONS', 50
         )
 
+        # What makes the agent decide. 'event', the default and what the
+        # manuscript describes, decides when a cell is added or removed, which
+        # is the tight feedback loop of section 6.4. 'cells' decides every
+        # CELLS_BETWEEN_DECISIONS cells that elapse, which is what MSF and
+        # Q-static do.
+        #
+        # The difference is not a constant. The event trigger is driven by the
+        # agent's own actions, so it falls quiet exactly when the schedule
+        # settles, and the slotframe floor is then all that is left. The cell
+        # trigger is driven by the radio, which never stops. Measured over the
+        # factorial: 136 decisions per mote against Q-static's 1048.
+        self.DECISION_TRIGGER = getattr(
+            self.settings, 'DECISION_TRIGGER', 'event'
+        )
+        self.CELLS_BETWEEN_DECISIONS = getattr(
+            self.settings, 'CELLS_BETWEEN_DECISIONS', 100
+        )
+        self.cells_since_decision = 0
+
         # Reward weights. The four terms are all shares of something, so equal
         # weights are the neutral starting point and need no justification
         # beyond that. A configuration may override any of them, which is what
         # a sensitivity analysis varies.
+        # off runs the ablation: cells go at random, the way the stock
+        # simulator picks them, instead of by utilisation
+        self.SMART_CELL_REMOVAL = getattr(
+            self.settings, 'SMART_CELL_REMOVAL', True)
+
         self.W_THROUGHPUT  = getattr(self.settings, 'W_THROUGHPUT', 1.0)
         self.W_UTILIZATION = getattr(self.settings, 'W_UTILIZATION', 1.0)
         self.W_LATENCY     = getattr(self.settings, 'W_LATENCY', 1.0)
@@ -112,6 +137,7 @@ class SchedulingFunctionQlearning(SchedulingFunctionBase):
             'EPSILON': {},
             'REWARD_TERMS': {}
         }
+        self.QLEARNING_STATS.update(empty_state_stats())
 
         #traffic estimate variables
         self.TRAFFIC = 0
@@ -188,6 +214,30 @@ class SchedulingFunctionQlearning(SchedulingFunctionBase):
 
         self.adapt_to_traffic([d.CELLOPTION_TX], None, 'timer')
 
+    def _count_cell_towards_next_decision(self, cell):
+        """Decide every CELLS_BETWEEN_DECISIONS cells, when asked to.
+
+        Off by default, so the agent keeps the event driven trigger the
+        manuscript describes and every result collected so far stands.
+        """
+        if self.DECISION_TRIGGER != 'cells':
+            return
+        if self._is_minimal_cell(cell):
+            return
+        self.cells_since_decision += 1
+        if self.cells_since_decision < self.CELLS_BETWEEN_DECISIONS:
+            return
+        self.cells_since_decision = 0
+
+        preferred_parent = self.mote.rpl.getPreferredParent()
+        if preferred_parent is None:
+            return
+        if self._sixp_busy_with(preferred_parent):
+            # 6P allows one transaction per peer at a time, and the cell being
+            # negotiated triggers a decision of its own when it lands
+            return
+        self.adapt_to_traffic([d.CELLOPTION_TX], cell, 'cells')
+
     def _sixp_busy_with(self, neighbor):
         """Whether a 6P transaction with this neighbour is already under way."""
         mine = self.mote.get_mac_addr()
@@ -212,6 +262,7 @@ class SchedulingFunctionQlearning(SchedulingFunctionBase):
             # single reading.
             discrete_state = self.discretize_variables(current_state)
             state_number = self.map_discrete_state_to_number(discrete_state)
+            record_state(self.QLEARNING_STATS, state_number)
 
             if hasattr(self, 'last_action'):
                 self.compute_q_table(
@@ -236,10 +287,12 @@ class SchedulingFunctionQlearning(SchedulingFunctionBase):
             # a fixed threshold made a mote draw at random until the threshold
             # was crossed and then never draw again, and half the motes never
             # reached the crossing at all.
-            if random.random() < self.EPSLON:
+            explored = random.random() < self.EPSLON
+            if explored:
                 action = random.choice([0, 1, 2])
             else:
                 action = self.return_best_q_action(state_number)
+            record_action(self.QLEARNING_STATS, state_number, action, explored)
 
 
             # 2) how many cells to move, following the manuscript, but never
@@ -270,6 +323,7 @@ class SchedulingFunctionQlearning(SchedulingFunctionBase):
                 )
 
             self.slotframes_since_decision = 0
+            self.cells_since_decision = 0
             self.last_state_number = state_number
             self.last_action = action
 
@@ -319,6 +373,7 @@ class SchedulingFunctionQlearning(SchedulingFunctionBase):
         if self.mote.dagRoot:
             return
         self._record_packet_age(sent_packet)
+        self._count_cell_towards_next_decision(cell)
         # if not self._is_minimal_cell(cell):
         #     # self.TX_CELLS_PASSED = self.TX_CELLS_PASSED + 1
         #     # if bool(sent_packet): 
@@ -556,17 +611,43 @@ class SchedulingFunctionQlearning(SchedulingFunctionBase):
         ]
         return max(0, len(allocated) - 1)
 
-    def _get_unused_cells(self,cell_option):
+    def _get_unused_cells(self, cell_option):
+        """The cells that may go, best candidate first.
+
+        With SMART_CELL_REMOVAL off this falls back to what the stock simulator
+        does, which is to pick at random among the allocated cells. That is the
+        ablation a reviewer asked for: the removal rule is called a hard-coded
+        heuristic doing the agent's job, and the only way to say how much of
+        DynQ's result comes from the rule rather than from the learning is to
+        run it both ways.
+
+        The floor of one cell is not part of the rule and stays in both arms.
+        It lives in _num_cells_that_may_go, MSF has the same, and without it a
+        mote can talk itself into silence.
+        """
         preferred_parent = self.mote.rpl.getPreferredParent()
+        cells = [
+            cell for cell in self.mote.tsch.get_cells(
+                preferred_parent,
+                self.SLOTFRAME_HANDLE
+            ) if cell.options == cell_option
+        ]
+
+        if self.SMART_CELL_REMOVAL:
+            cells = [
+                cell for cell in cells
+                if self._is_unused_cell(cell, cell_option)
+            ]
+        else:
+            cells = list(cells)
+            random.shuffle(cells)
+
         return [
             {"channelOffset": cell.channel_offset,
              "slotOffset": cell.slot_offset,
              "num_tx": cell.num_tx,
              "num_tx_ack": cell.num_tx_ack}
-            for cell in self.mote.tsch.get_cells(
-                preferred_parent,
-                self.SLOTFRAME_HANDLE
-            ) if self._is_unused_cell(cell, cell_option)
+            for cell in cells
         ]
     
     def _total_charge(self):
@@ -849,10 +930,21 @@ class SchedulingFunctionQlearning(SchedulingFunctionBase):
         return discrete_state
 
     def map_discrete_state_to_number(self, discrete_state):
-        """The row of the Q-table for an already discretised state."""
+        """The row of the Q-table for an already discretised state.
+
+        With no state factors at all the table has a single row, and every
+        decision lands in it. That cell is what the 2^k factorial needs in
+        order to mean what it says: its empty cell runs MSF, so every main
+        effect published from it compares a state factor against a different
+        scheduling function rather than against the same agent without that
+        factor. int('', 2) raised instead of returning row zero, which is why
+        the cell had never been run.
+        """
         binary_number = ''
         for key, value in discrete_state.items():
             binary_number += str(value)
+        if not binary_number:
+            return 0
         return int(binary_number, 2)
 
     def map_state_to_number(self, state):
@@ -1084,7 +1176,16 @@ class SchedulingFunctionQlearning(SchedulingFunctionBase):
             cell_options  = cell_options,
             cell_list_len = self.DEFAULT_CELL_LIST_LEN
         )
-        assert len(cell_list) > 0
+        if not cell_list:
+            # A 6P timeout retries this request, and by the time it does the
+            # cells it meant to delete can already be gone: the transaction
+            # that timed out may have been applied at the other end, or the
+            # agent may have removed them since. There is then nothing to ask
+            # for, and asserting kills the whole run over a request that
+            # simply has no work left to do. Give up on this neighbour the way
+            # the retry limit does.
+            self.retry_count[parent] = -1
+            return
 
         # prepare callback
         callback = self._create_delete_request_callback(

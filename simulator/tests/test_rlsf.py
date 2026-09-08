@@ -276,3 +276,110 @@ def test_conta_celulas_do_pai_para_a_recompensa(agente, monkeypatch):
 
     assert sf.cells_elapsed == 2
     assert sf.cells_used == 1
+
+
+# === o retry de remocao do MSF ===========================================
+
+def test_remocao_sem_celula_nao_estoura(agente, monkeypatch):
+    """MSF asserts on an empty cell list; its own retry path can produce one.
+
+    A DELETE that times out is reissued from the timeout callback with the
+    original count, and by then the cells may already be gone.
+    """
+    sf = agente.sf
+    monkeypatch.setattr(agente.tsch, 'get_cells', lambda vizinho, handle: [])
+    sf.retry_count['pai'] = 2
+
+    sf._request_deleting_cells('pai', num_cells=3,
+                               cell_options=sf.TX_CELL_OPT)
+
+    # nao estourou, e o vizinho voltou a ficar livre em vez de preso em retry
+    assert sf.retry_count['pai'] == -1
+
+
+def test_remocao_com_celula_segue_para_o_msf(agente, monkeypatch):
+    """With cells to give up, the request goes through to MSF untouched."""
+    from SimEngine.Mote.scheduling_functions.MSF import SchedulingFunctionMSF
+
+    sf = agente.sf
+
+    class Celula(object):
+        options = [d.CELLOPTION_TX]
+
+    monkeypatch.setattr(agente.tsch, 'get_cells',
+                        lambda vizinho, handle: [Celula()])
+    chamou = []
+    monkeypatch.setattr(
+        SchedulingFunctionMSF, '_request_deleting_cells',
+        lambda self, neighbor, num_cells, cell_options: chamou.append(num_cells)
+    )
+    sf.retry_count['pai'] = -1
+
+    sf._request_deleting_cells('pai', num_cells=2,
+                               cell_options=sf.TX_CELL_OPT)
+    assert chamou == [2]
+
+
+# === o gancho por slotframe dispara para todo mote =======================
+
+def test_sem_slotframe_instalado_nao_decide(agente, monkeypatch):
+    """stop() uninstalls the slotframes when a mote desynchronises.
+
+    The engine still calls this hook for every mote on every slotframe, and
+    tsch.get_available_slots returns the integer 0 rather than a list when the
+    handle is gone, which MSF's _get_available_slots then tries to build a set
+    from.
+    """
+    sf = agente.sf
+    sf.stop()
+    sf.last_state = 3
+
+    sf.indication_slotframe_window_ending(1)        # nao pode estourar
+
+    assert sf.last_state is None
+
+
+def test_sem_pai_nao_decide(agente, monkeypatch):
+    sf = agente.sf
+    monkeypatch.setattr(agente.rpl, 'getPreferredParent', lambda: None)
+    sf.last_state = 3
+
+    sf.indication_slotframe_window_ending(1)
+
+    assert sf.last_state is None
+
+
+def test_desync_nao_credita_recompensa_atravessando_o_buraco(agente, monkeypatch):
+    """A reward earned before a desync must not update the row chosen after it."""
+    sf = agente.sf
+    sf.last_state, sf.last_action = 2, 5
+    sf.stop()
+
+    sf.indication_slotframe_window_ending(1)
+
+    assert sf.last_state is None
+
+
+def test_pacote_esvaziado_conta_como_ausente(agente, monkeypatch):
+    """mote.drop_packet deletes every key, so a dropped packet arrives as {}.
+
+    MSF guards for None and then reads received_packet['mac'].
+    """
+    sf = agente.sf
+    monkeypatch.setattr(agente.rpl, 'getPreferredParent', lambda: 'pai')
+
+    class Slotframe(object):
+        slotframe_handle = 1
+
+    class Celula(object):
+        mac_addr = None
+        options = [d.CELLOPTION_RX]
+        slotframe = Slotframe()
+
+    vistos = []
+    monkeypatch.setattr(sf, '_handle_rx_cell_elapsed_event',
+                        lambda usado: vistos.append(usado))
+    monkeypatch.setattr(sf, 'get_negotiated_rx_cells', lambda mac: [])
+
+    sf.indication_rx_cell_elapsed(Celula(), {})     # nao pode estourar
+    assert vistos == [False]
