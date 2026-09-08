@@ -172,13 +172,14 @@ class SchedulingFunctionQlearning(SchedulingFunctionBase):
             length           = slotframe_0.length
         )
 
+        # once, not once here and again below: SlotFrame.add appends without
+        # deduplicating, so a non-root mote ended up with the same autonomous
+        # RX cell twice at the same slot and channel offset. Every elapsed
+        # autonomous slot then counted twice towards RX_CELLS_PASSED, halving
+        # the decision period the configuration asks for.
         self.allocate_autonomous_rx_cell()
 
-        if self.mote.dagRoot:
-            # do nothing
-            pass
-        else:
-            self.allocate_autonomous_rx_cell()
+        if not self.mote.dagRoot:
             self.initialize_q_table(self.STATE_SIZE,self.ACTION_STATE_SIZE)
 
 
