@@ -218,6 +218,46 @@ def table_summary(runs):
     }
 
 
+def run_number(run):
+    """The integer the paired statistics key on, out of a run_N folder name."""
+    try:
+        return int(run.split('_')[-1])
+    except ValueError:
+        return run
+
+
+def per_run_metrics(folder):
+    """One number per run, for the paired statistics in compare_schedulers.
+
+    mean_reward is the mean over motes of a mote's mean per-decision reward.
+    final_policy_gap is the mean separation inside the visited rows of the
+    table the run ended with: a table whose columns come out level has learned
+    nothing worth acting on, whatever its reward curve did.
+
+    Both are in the units of that learner's own reward, so they are for
+    comparing a learner with its own random control and not with the other
+    learner.
+    """
+    saida = {}
+    for run, motes in load_runs(folder).items():
+        recompensas = []
+        for mote in motes:
+            decisoes = decisions_of(mote)
+            if decisoes:
+                recompensas.append(
+                    sum(d['reward'] for d in decisoes) / len(decisoes)
+                )
+        if not recompensas:
+            continue
+        saida[run_number(run)] = {
+            'mean_reward': sum(recompensas) / len(recompensas),
+            'final_policy_gap': table_summary(
+                {run: motes}
+            )['mean_separation'],
+        }
+    return saida
+
+
 def convergence(churn, bins):
     """The bin from which no visited row ever changed its mind again.
 

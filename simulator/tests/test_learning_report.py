@@ -146,3 +146,26 @@ def test_a_folder_of_runs_reads_end_to_end(tmpdir):
 def json_of(objeto):
     import json
     return json.dumps(objeto)
+
+
+# ------------------------------------- the per-run numbers the statistics use
+
+def test_one_number_per_run_for_the_paired_statistics(tmpdir):
+    for run in range(2):
+        destino = tmpdir.join('exec_numMotes_4', 'run_%d' % run, '1')
+        destino.ensure(dir=True)
+        destino.join('qlearning_stats.json').write(json_of(mote(
+            [decisao(0, reward=float(run)), decisao(10, reward=float(run))],
+            visitas={'0': 2}, tabela={'0': [2.0, 0.0, 0.0]}
+        )))
+
+    metricas = lr.per_run_metrics(str(tmpdir))
+    assert sorted(metricas) == [0, 1]          # keyed the way .kpi runs are
+    assert metricas[1]['mean_reward'] == 1.0
+    assert metricas[1]['final_policy_gap'] == 2.0
+
+
+def test_a_folder_without_learners_yields_nothing_to_pair(tmpdir):
+    """MSF and EMSF write no trace, and the pair is dropped rather than
+    given a zero that would read as a real value."""
+    assert lr.per_run_metrics(str(tmpdir)) == {}

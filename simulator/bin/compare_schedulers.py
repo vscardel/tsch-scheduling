@@ -38,6 +38,7 @@ import random
 import numpy as np
 from scipy.stats import wilcoxon
 
+from learning_report import per_run_metrics
 from score_model import run_score
 from runExperiments import compute_run_lifetime
 
@@ -86,6 +87,29 @@ def _score(run):
     return run_score(run)
 
 
+def _mean_reward(run):
+    """The learner's own reward, mean over its motes and its decisions.
+
+    None for a scheduler that does not learn, which drops the pair rather than
+    inventing a zero for it.
+    """
+    aprendizado = run.get('learning-stats')
+    return aprendizado['mean_reward'] if aprendizado else None
+
+
+def _final_policy_gap(run):
+    """How far apart the columns of a visited row end up.
+
+    A run whose rows come out level learned nothing it can act on. Read
+    against the same learner's random control, this is the paired evidence
+    that the table did work, with the confidence interval and effect size two
+    reviewers asked for on the network metrics and nobody has yet seen on the
+    learning itself.
+    """
+    aprendizado = run.get('learning-stats')
+    return aprendizado['final_policy_gap'] if aprendizado else None
+
+
 METRICS = [
     ('score',            _score,            'lower'),
     ('latency',          _latency,          'lower'),
@@ -95,6 +119,10 @@ METRICS = [
     ('lifetime_mean',    _lifetime_mean,    'higher'),
     ('sixp_per_packet',  _sixp_per_packet,  'lower'),
     ('sixp_transactions', _sixp_transactions, 'lower'),
+    # in the learner's own reward units, so these compare an arm with its
+    # own random control and not one learner with the other
+    ('mean_reward',      _mean_reward,      'higher'),
+    ('final_policy_gap', _final_policy_gap, 'higher'),
 ]
 
 
@@ -246,8 +274,17 @@ def main():
         if not runs:
             print('no .kpi under {0}, skipping {1}'.format(folder, sf))
             continue
+        # the learning quantities live beside the .kpi files, one folder per
+        # mote per run, and are simply absent for a scheduler that does not
+        # learn
+        aprendidos = 0
+        for run_id, valores in per_run_metrics(folder).items():
+            if run_id in runs:
+                runs[run_id]['learning-stats'] = valores
+                aprendidos += 1
         runs_by_scheduler[sf] = runs
-        print('{0}: {1} runs'.format(sf, len(runs)))
+        print('{0}: {1} runs, {2} com traco de aprendizado'.format(
+            sf, len(runs), aprendidos))
 
     if len(runs_by_scheduler) < 2:
         raise SystemExit('need at least two schedulers with results')
