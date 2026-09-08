@@ -25,6 +25,10 @@ class SchedulingFunctionQlearningSBRC24(SchedulingFunctionBase):
     INITIAL_REMAINING_BATTERY = 2821500
 
     num_states = 8
+    # S_f of Equation 11: q_static.tex describes it as low traffic, low buffer
+    # occupancy and high remaining energy, in the order discretize_variables
+    # returns the three bits
+    DESIRABLE_STATE = (0, 0, 1)
     STATE_SIZE = 3
     ACTION_STATE_SIZE = 3
 
@@ -51,6 +55,10 @@ class SchedulingFunctionQlearningSBRC24(SchedulingFunctionBase):
 
         #Q-learning
         self.current_state = (0, 0, self.INITIAL_REMAINING_BATTERY)
+        # the decision whose reward is not knowable yet, because the reward
+        # depends on the state that decision leads to
+        self.last_state_number = None
+        self.last_action = None
         self.EPSLON = None
         self.EPISODE = 0
         self.Q_table = dict()
@@ -145,42 +153,54 @@ class SchedulingFunctionQlearningSBRC24(SchedulingFunctionBase):
                 # print('----------------------')
                 # print(self.Q_table)
 
-                next_state = (
+                # The state the agent is in now, discretised once. Every
+                # discretise call appends to the moving average buffers, so the
+                # decision, the reward and the row all read this one answer.
+                state = (
                     self._compute_traffic(),
                     self._compute_queue_ratio(),
                     self._compute_charge()
                 )
+                discrete_state = self.discretize_variables(state)
+                discrete_traffic  = discrete_state[0]
+                discrete_queue    = discrete_state[1]
+                discrete_charge   = discrete_state[2]
+                state_number = self.map_discrete_state_to_number(discrete_state)
+
+                # The previous decision can only be scored now: its reward
+                # depends on the state it led to, which is the state just
+                # observed. The row that gets updated is the row that decision
+                # was taken in, which is what q_static.tex asks for: "the
+                # reward function updates the Q(s,a) value for the current
+                # state s and action a". It used to update the row of s'
+                # instead, and to choose the action from the row of the state
+                # observed one decision earlier, so both ends of the update
+                # were a decision out of step.
+                if self.last_action is not None:
+                    self.compute_q_table(
+                        self.last_state_number,
+                        state_number,
+                        self.last_action,
+                        self.compute_reward(discrete_state)
+                    )
 
                 self.num_packets_in_current_episode = 0
 
-                is_random = False
-                if self.EPSLON < self.EPSLON_THRESHOLD:
-                    action = self.return_best_q_action(self.map_state_to_number(self.current_state))
-                else:
+                explored = not (self.EPSLON < self.EPSLON_THRESHOLD)
+                if explored:
                     action = random.choice([0,1,2])
-
-                discrete_variables = self.discretize_variables(self.current_state)
-
-                discrete_traffic = discrete_variables[0]
-                discrete_queue = discrete_variables[1]
-                discrete_energy_left = discrete_variables[2]
-
-                # the row the decision above read, rebuilt from the
-                # discretisation that was already done rather than by calling
-                # map_state_to_number again: every discretise call appends to
-                # the moving average buffers and moves self.TRAFFIC, so a
-                # second one would change the run it is supposed to measure
-                state_number = int('{0}{1}{2}'.format(
-                    discrete_traffic, discrete_queue, discrete_energy_left), 2)
+                else:
+                    action = self.return_best_q_action(state_number)
                 record_state(self.QLEARNING_STATS, state_number)
                 record_action(
-                    self.QLEARNING_STATS, state_number, action,
-                    not (self.EPSLON < self.EPSLON_THRESHOLD)
+                    self.QLEARNING_STATS, state_number, action, explored
                 )
 
-                add_cells =  (discrete_queue) + (discrete_traffic) + (discrete_energy_left)  
-                remove_cells =  (1-discrete_queue) + (1-discrete_traffic) + (1-discrete_energy_left)  
-                
+                # Equations 12 and 13. Both reach zero, in states 111 and 000
+                # respectively, and the manuscript says so; sixp_interface_add
+                # and sixp_interface_delete decline to negotiate nothing.
+                add_cells    = discrete_traffic + discrete_queue + discrete_charge
+                remove_cells = 3 - add_cells
 
                 if action == 0:
                     self.sixp_interface_add(
@@ -194,11 +214,10 @@ class SchedulingFunctionQlearningSBRC24(SchedulingFunctionBase):
                         num_cells        = remove_cells,
                         cell_option      = cellopt
                     )
-                
-                # import ipdb;
-                # ipdb.set_trace()
-                self.current_state = next_state
-                self.compute_q_table(self.current_state,next_state,action)
+
+                self.current_state     = state
+                self.last_state_number = state_number
+                self.last_action       = action
 
     def indication_queue_full(self):
         self.QUEUE_OVERFLOW = True
@@ -395,21 +414,28 @@ class SchedulingFunctionQlearningSBRC24(SchedulingFunctionBase):
         return self.AVERAGE_ENERGY_CONSUMED
     
 
-    def compute_reward(self,list_next_state_variables):
+    def compute_reward(self, discrete_state):
+        """Equation 11, on a state that has already been discretised.
 
-        next_state = self.map_state_to_number(list_next_state_variables)
+        Three in the desirable state, otherwise minus traffic, minus queue,
+        plus charge. The gap between the two branches is the manuscript's and
+        is left as published.
 
-        discrete_variables = self.discretize_variables(list_next_state_variables)
+        The three bits used to be read in the wrong order.
+        discretize_variables returns [traffic, queue, charge] and this read
+        them as [queue, charge, traffic], so the expression evaluated to
+        (1 - traffic) + (1 - charge) + queue: two of the three terms had the
+        wrong sign, and the agent was rewarded for a full queue and for a
+        flatter battery. The special case above gave it away, since it returns
+        the value the correct formula already produces in that state.
+        """
+        discrete_traffic = discrete_state[0]
+        discrete_queue   = discrete_state[1]
+        discrete_charge  = discrete_state[2]
 
-        discrete_queue = discrete_variables[0]
-        discrete_energy_left = discrete_variables[1]
-        discrete_num_rx_ack = discrete_variables[2]
-            
-        if next_state == 1:
-            #5
+        if tuple(discrete_state) == self.DESIRABLE_STATE:
             return 3
-        else:
-            return (1-discrete_queue) + (1-discrete_num_rx_ack) + (+discrete_energy_left)  
+        return -discrete_traffic - discrete_queue + discrete_charge
         
 
     def discretize_queue_ratio(self,queue_ratio):
@@ -463,6 +489,10 @@ class SchedulingFunctionQlearningSBRC24(SchedulingFunctionBase):
             avg_current_uA = 0
         return avg_current_uA
 
+    def map_discrete_state_to_number(self, discrete_state):
+        """The row of the Q-table for an already discretised state."""
+        return int(''.join(str(bit) for bit in discrete_state), 2)
+
     def map_state_to_number(self, list_state_variables):
         discrete_state_variables = self.discretize_variables(list_state_variables)
         discrete_traffic = discrete_state_variables[0]
@@ -479,15 +509,17 @@ class SchedulingFunctionQlearningSBRC24(SchedulingFunctionBase):
         current_vector = self.Q_table[state]
         return np.argmax(current_vector)
     
-    def compute_q_table(self,list_state_variables,list_next_state_variables,action):
-        curr_state = self.map_state_to_number(list_state_variables)
-        next_state = self.map_state_to_number(list_next_state_variables)
-        #compute deltaQ
-        reward = self.compute_reward(list_next_state_variables)
+    def compute_q_table(self, curr_state, next_state, action, reward):
+        """Equations 2 and 3, on the row the action was taken in.
+
+        The rows and the reward arrive already computed. Deriving them here
+        called map_state_to_number twice and compute_reward once more, and each
+        of those re-runs the whole discretisation.
+        """
         best_next_q = self.return_best_q_value(next_state)
-        temporal_difference = reward + self.BETA * best_next_q - self.Q_table[curr_state][action]
-        deltaQ = reward + self.BETA * self.return_best_q_value(next_state)
-        #compute Q_table[curr_state][action]
+        temporal_difference = (
+            reward + self.BETA * best_next_q - self.Q_table[curr_state][action]
+        )
         self.Q_table[curr_state][action] += self.ALFA * temporal_difference
     
     def _compute_queue_ratio(self):
