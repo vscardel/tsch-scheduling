@@ -25,6 +25,10 @@ class SchedulingFunctionQlearningSBRC24(SchedulingFunctionBase):
     INITIAL_REMAINING_BATTERY = 2821500
 
     num_states = 8
+    # S_f of Equation 11: q_static.tex describes it as low traffic, low buffer
+    # occupancy and high remaining energy, in the order discretize_variables
+    # returns the three bits
+    DESIRABLE_STATE = (0, 0, 1)
     STATE_SIZE = 3
     ACTION_STATE_SIZE = 3
 
@@ -40,6 +44,15 @@ class SchedulingFunctionQlearningSBRC24(SchedulingFunctionBase):
         self.MAX_TX_CELLS_PASSED = self.settings.MAX_TX_CELLS_PASSED
         self.MAX_RX_CELLS_PASSED = self.settings.MAX_RX_CELLS_PASSED
         self.EPSLON_THRESHOLD = self.settings.EPSLON_THRESHOLD
+        # tau_C of Equation 9, as a fraction of a full battery. The manuscript
+        # does not publish any of the three thresholds.
+        self.TAU_CHARGE = getattr(self.settings, 'QSTATIC_TAU_CHARGE', 0.5)
+        # off by default: the manuscript gives the utilisation-aware removal to
+        # DynQ alone. On, it runs the same rule, which is what a comparison
+        # holding the heuristic constant needs.
+        self.SMART_CELL_REMOVAL = getattr(
+            self.settings, 'QSTATIC_SMART_CELL_REMOVAL', False
+        )
 
         # Per-mote state. Each mote runs its own Q-learning agent, so none of
         # this may live on the class: a mutable class attribute is a single
@@ -51,13 +64,24 @@ class SchedulingFunctionQlearningSBRC24(SchedulingFunctionBase):
 
         #Q-learning
         self.current_state = (0, 0, self.INITIAL_REMAINING_BATTERY)
+        # the decision whose reward is not knowable yet, because the reward
+        # depends on the state that decision leads to
+        self.last_state_number = None
+        self.last_action = None
         self.EPSLON = None
         self.EPISODE = 0
         self.Q_table = dict()
         # the same per-mote counters DynQ keeps, so the two learners' visited
         # states can be put side by side rather than described one at a time
         self.QLEARNING_STATS = empty_state_stats()
-        self.cumulative_reward = 0
+        # The same reward trace DynQ keeps, so the two learners' reward curves
+        # can be put side by side. Reviewer 3 asked for exactly that, and
+        # nothing in a Q-static run recorded a reward at all: the field that
+        # was there for it was never incremented by anything.
+        self.QLEARNING_STATS['CUMULATIVE_REWARD'] = {}
+        self.QLEARNING_STATS['EPSILON'] = {}
+        self.RECORDED_STEP = 0
+        self.CUMULATIVE_REWARD = 0
         self.TX_CELLS_PASSED = 0
         self.RX_CELLS_PASSED = 0
 
@@ -82,13 +106,14 @@ class SchedulingFunctionQlearningSBRC24(SchedulingFunctionBase):
             length           = slotframe_0.length
         )
 
+        # once, not once here and again below: SlotFrame.add appends without
+        # deduplicating, so a non-root mote ended up with the same autonomous
+        # RX cell twice at the same slot and channel offset. Every elapsed
+        # autonomous slot then counted twice towards RX_CELLS_PASSED, halving
+        # the decision period the configuration asks for.
         self.allocate_autonomous_rx_cell()
 
-        if self.mote.dagRoot:
-            # do nothing
-            pass
-        else:
-            self.allocate_autonomous_rx_cell()
+        if not self.mote.dagRoot:
             self.initialize_q_table(self.STATE_SIZE,self.ACTION_STATE_SIZE)
 
 
@@ -98,9 +123,15 @@ class SchedulingFunctionQlearningSBRC24(SchedulingFunctionBase):
         pass
         
     def stop(self):
+        """Give up the slotframe, keep the agent.
+
+        EPISODE used to be reset here as well, which undid the line above it:
+        epsilon is recomputed from the episode count on the next decision, so
+        zeroing it sent the mote back to epsilon at its maximum and another
+        several hundred decisions of pure exploration.
+        """
         self.mote.tsch.delete_slotframe(self.SLOTFRAME_HANDLE)
         self.EPSLON = self.MIN_EPSLON
-        self.EPISODE = 0
 
     def indication_neighbor_added(self, neighbor_mac_addr):
         pass # do nothing
@@ -145,42 +176,56 @@ class SchedulingFunctionQlearningSBRC24(SchedulingFunctionBase):
                 # print('----------------------')
                 # print(self.Q_table)
 
-                next_state = (
+                # The state the agent is in now, discretised once. Every
+                # discretise call appends to the moving average buffers, so the
+                # decision, the reward and the row all read this one answer.
+                state = (
                     self._compute_traffic(),
                     self._compute_queue_ratio(),
                     self._compute_charge()
                 )
+                discrete_state = self.discretize_variables(state)
+                discrete_traffic  = discrete_state[0]
+                discrete_queue    = discrete_state[1]
+                discrete_charge   = discrete_state[2]
+                state_number = self.map_discrete_state_to_number(discrete_state)
+
+                # The previous decision can only be scored now: its reward
+                # depends on the state it led to, which is the state just
+                # observed. The row that gets updated is the row that decision
+                # was taken in, which is what q_static.tex asks for: "the
+                # reward function updates the Q(s,a) value for the current
+                # state s and action a". It used to update the row of s'
+                # instead, and to choose the action from the row of the state
+                # observed one decision earlier, so both ends of the update
+                # were a decision out of step.
+                if self.last_action is not None:
+                    reward = self.compute_reward(discrete_state)
+                    self._record_reward(reward)
+                    self.compute_q_table(
+                        self.last_state_number,
+                        state_number,
+                        self.last_action,
+                        reward
+                    )
 
                 self.num_packets_in_current_episode = 0
 
-                is_random = False
-                if self.EPSLON < self.EPSLON_THRESHOLD:
-                    action = self.return_best_q_action(self.map_state_to_number(self.current_state))
-                else:
+                explored = not (self.EPSLON < self.EPSLON_THRESHOLD)
+                if explored:
                     action = random.choice([0,1,2])
-
-                discrete_variables = self.discretize_variables(self.current_state)
-
-                discrete_traffic = discrete_variables[0]
-                discrete_queue = discrete_variables[1]
-                discrete_energy_left = discrete_variables[2]
-
-                # the row the decision above read, rebuilt from the
-                # discretisation that was already done rather than by calling
-                # map_state_to_number again: every discretise call appends to
-                # the moving average buffers and moves self.TRAFFIC, so a
-                # second one would change the run it is supposed to measure
-                state_number = int('{0}{1}{2}'.format(
-                    discrete_traffic, discrete_queue, discrete_energy_left), 2)
+                else:
+                    action = self.return_best_q_action(state_number)
                 record_state(self.QLEARNING_STATS, state_number)
                 record_action(
-                    self.QLEARNING_STATS, state_number, action,
-                    not (self.EPSLON < self.EPSLON_THRESHOLD)
+                    self.QLEARNING_STATS, state_number, action, explored
                 )
 
-                add_cells =  (discrete_queue) + (discrete_traffic) + (discrete_energy_left)  
-                remove_cells =  (1-discrete_queue) + (1-discrete_traffic) + (1-discrete_energy_left)  
-                
+                # Equations 12 and 13. Both reach zero, in states 111 and 000
+                # respectively, and the manuscript says so; sixp_interface_add
+                # and sixp_interface_delete decline to negotiate nothing.
+                add_cells    = discrete_traffic + discrete_queue + discrete_charge
+                remove_cells = 3 - add_cells
 
                 if action == 0:
                     self.sixp_interface_add(
@@ -194,11 +239,10 @@ class SchedulingFunctionQlearningSBRC24(SchedulingFunctionBase):
                         num_cells        = remove_cells,
                         cell_option      = cellopt
                     )
-                
-                # import ipdb;
-                # ipdb.set_trace()
-                self.current_state = next_state
-                self.compute_q_table(self.current_state,next_state,action)
+
+                self.current_state     = state
+                self.last_state_number = state_number
+                self.last_action       = action
 
     def indication_queue_full(self):
         self.QUEUE_OVERFLOW = True
@@ -333,8 +377,14 @@ class SchedulingFunctionQlearningSBRC24(SchedulingFunctionBase):
             return []
         
     def initialize_q_table(self,state_size,action_space_size):
+        """Create the rows that are missing, and leave the rest alone.
+
+        tsch calls start() on every resynchronisation, and this overwrote all
+        eight rows with zeros, so a mote lost everything it had learned each
+        time it fell out of sync and came back.
+        """
         for state in range(self.num_states):
-            self.Q_table[state] = [0]*action_space_size
+            self.Q_table.setdefault(state, [0]*action_space_size)
 
     def _get_available_slots(self):
         available_slots = self.mote.tsch.get_available_slots(self.SLOTFRAME_HANDLE)
@@ -342,32 +392,67 @@ class SchedulingFunctionQlearningSBRC24(SchedulingFunctionBase):
             return list(set(available_slots) - self.locked_slots)
         return []
     
-    def _get_unused_cells(self,cell_option):
+    def _is_unused_cell(self, cell, cell_option):
+        """Whether a cell is a candidate for removal under the smart rule.
+
+        The same criterion DynQ uses, quoted from algorithm.tex: a TX cell
+        whose acknowledged fraction is below 80%, or an RX cell that received
+        nothing. A TX cell that has never transmitted has no ratio to judge it
+        by, which also keeps num_tx out of a division.
+        """
+        if cell.options != cell_option:
+            return False
+        # cell_option arrives as a list, the same shape as cell.options, so it
+        # has to be tested with "in"
+        if d.CELLOPTION_TX in cell_option:
+            if cell.num_tx == 0:
+                return False
+            return float(cell.num_tx_ack) / cell.num_tx < 0.8
+        return cell.num_rx == 0
+
+    def _get_cells_to_delete(self, cell_option):
+        """The cells this scheduling function offers up for deletion.
+
+        By default the whole occupied set in random order, which is the
+        simulator's own behaviour and what the manuscript attributes to the
+        baseline: algorithm.tex introduces the utilisation rule as a
+        modification made for DynQ, and adds that "otherwise, the logic of
+        insertion or removal is the same as in the baseline".
+
+        QSTATIC_SMART_CELL_REMOVAL turns the utilisation rule on here too, so
+        the two learners can be compared with the heuristic held constant. It
+        is off by default, and DynQ's own SMART_CELL_REMOVAL is on by default,
+        which is why they are two settings and not one.
+
+        This used to compare cell_option, a list, against the bare
+        d.CELLOPTION_TX string. That is never true, so every call fell through
+        to the RX branch and asked for TX cells with num_rx > 0, of which there
+        are none. The list came back empty and the 6P request was never sent:
+        removing a TX cell was a no-op on the decision path that produces most
+        decisions. The RX branch had the criterion inverted as well, keeping
+        the idle cells and offering up the busy ones.
+        """
         preferred_parent = self.mote.rpl.getPreferredParent()
-        if cell_option == d.CELLOPTION_TX:
-            available_cells = [
-                            {"channelOffset":cell.channel_offset,
-                                "slotOffset":cell.slot_offset} 
-                            for cell in self.mote.tsch.get_cells(
-                            preferred_parent,
-                            self.SLOTFRAME_HANDLE
-                        )
-                    if cell.options == cell_option and \
-                    float(cell.num_tx_ack )/ cell.num_tx >= 0.8]
+        cells = [
+            cell
+            for cell in self.mote.tsch.get_cells(
+                preferred_parent, self.SLOTFRAME_HANDLE
+            )
+            if cell.options == cell_option
+        ]
+        if self.SMART_CELL_REMOVAL:
+            cells = [
+                cell for cell in cells
+                if self._is_unused_cell(cell, cell_option)
+            ]
         else:
-            available_cells = [
-                            {"channelOffset":cell.channel_offset,
-                                "slotOffset":cell.slot_offset} 
-                            for cell in self.mote.tsch.get_cells(
-                            preferred_parent,
-                            self.SLOTFRAME_HANDLE
-                        )
-                    if cell.options == cell_option and \
-                    cell.num_rx > 0]
-        unused_cells = []
-        for cell in available_cells:
-            unused_cells.append(cell)
-        return unused_cells
+            cells = list(cells)
+            random.shuffle(cells)
+        return [
+            {"channelOffset": cell.channel_offset,
+             "slotOffset": cell.slot_offset}
+            for cell in cells
+        ]
     
 
     def _compute_average_traffic(self, current_traffic):
@@ -395,21 +480,41 @@ class SchedulingFunctionQlearningSBRC24(SchedulingFunctionBase):
         return self.AVERAGE_ENERGY_CONSUMED
     
 
-    def compute_reward(self,list_next_state_variables):
+    def _record_reward(self, reward):
+        """Keep the reward trace, without touching the decision.
 
-        next_state = self.map_state_to_number(list_next_state_variables)
+        Reads no random numbers and changes no state the agent acts on, so an
+        instrumented run scores exactly what it scored before.
+        """
+        self.RECORDED_STEP += 1
+        self.CUMULATIVE_REWARD += reward
+        self.QLEARNING_STATS['CUMULATIVE_REWARD'][self.RECORDED_STEP] = (
+            self.CUMULATIVE_REWARD
+        )
+        self.QLEARNING_STATS['EPSILON'][self.RECORDED_STEP] = self.EPSLON
 
-        discrete_variables = self.discretize_variables(list_next_state_variables)
+    def compute_reward(self, discrete_state):
+        """Equation 11, on a state that has already been discretised.
 
-        discrete_queue = discrete_variables[0]
-        discrete_energy_left = discrete_variables[1]
-        discrete_num_rx_ack = discrete_variables[2]
-            
-        if next_state == 1:
-            #5
+        Three in the desirable state, otherwise minus traffic, minus queue,
+        plus charge. The gap between the two branches is the manuscript's and
+        is left as published.
+
+        The three bits used to be read in the wrong order.
+        discretize_variables returns [traffic, queue, charge] and this read
+        them as [queue, charge, traffic], so the expression evaluated to
+        (1 - traffic) + (1 - charge) + queue: two of the three terms had the
+        wrong sign, and the agent was rewarded for a full queue and for a
+        flatter battery. The special case above gave it away, since it returns
+        the value the correct formula already produces in that state.
+        """
+        discrete_traffic = discrete_state[0]
+        discrete_queue   = discrete_state[1]
+        discrete_charge  = discrete_state[2]
+
+        if tuple(discrete_state) == self.DESIRABLE_STATE:
             return 3
-        else:
-            return (1-discrete_queue) + (1-discrete_num_rx_ack) + (+discrete_energy_left)  
+        return -discrete_traffic - discrete_queue + discrete_charge
         
 
     def discretize_queue_ratio(self,queue_ratio):
@@ -425,8 +530,17 @@ class SchedulingFunctionQlearningSBRC24(SchedulingFunctionBase):
         return 0
     
     def discretize_energy(self,energy_left):
+        """Equation 9: one above tau_C, zero below.
+
+        energy_left is now the fraction of the battery still there, so the old
+        absolute threshold of 500 does not carry over. The manuscript never
+        publishes tau_C, saying only that the thresholds "were empirically
+        obtained", so it is a setting with an arbitrary default rather than a
+        constant pretending to be derived. It belongs in the Bayesian search
+        alongside the other hyperparameters.
+        """
         average_energy_ratio = self._compute_average_energy_ratio(energy_left)
-        if energy_left > 500:
+        if energy_left > self.TAU_CHARGE:
             return 1
         return 0
 
@@ -445,23 +559,41 @@ class SchedulingFunctionQlearningSBRC24(SchedulingFunctionBase):
         ]
     
 
+    def _spent_charge(self):
+        """Charge drawn from the battery since boot, in uC.
+
+        The radio counters only ever grow, so this is a plain reading of them
+        against the simulator's own cost per operation.
+        """
+        stats = self.mote.radio.stats
+        return (
+            stats['idle_listen']    * d.CHARGE_IdleListen_uC +
+            stats['tx_data_rx_ack'] * d.CHARGE_TxDataRxAck_uC +
+            stats['rx_data_tx_ack'] * d.CHARGE_RxDataTxAck_uC +
+            stats['tx_data']        * d.CHARGE_TxData_uC +
+            stats['rx_data']        * d.CHARGE_RxData_uC +
+            stats['sleep']          * d.CHARGE_Sleep_uC
+        )
+
     def _compute_charge(self):
-        charge = 0
-        charge =  self.mote.radio.stats['idle_listen'] * d.CHARGE_IdleListen_uC
-        charge += self.mote.radio.stats['tx_data_rx_ack'] * d.CHARGE_TxDataRxAck_uC
-        charge += self.mote.radio.stats['rx_data_tx_ack'] * d.CHARGE_RxDataTxAck_uC
-        charge += self.mote.radio.stats['tx_data'] * d.CHARGE_TxData_uC
-        charge += self.mote.radio.stats['rx_data'] * d.CHARGE_RxData_uC
-        charge += self.mote.radio.stats['sleep'] * d.CHARGE_Sleep_uC
-        current_asn = self.engine.getAsn()
-        asn_synced = self.mote.tsch.asnLastSync
-        #tempo em s que o dispositivo esta sincronizado
-        denominator = (float(current_asn-asn_synced) * self.settings.tsch_slotDuration)
-        if denominator != 0:
-            avg_current_uA = charge/denominator
-        else:
-            avg_current_uA = 0
-        return avg_current_uA
+        """C_h, the remaining battery, as a fraction of a full one.
+
+        q_static.tex calls this factor "the device's remaining battery level".
+        It used to return the charge drawn since boot divided by the time since
+        the last resynchronisation, and tsch.py resets asnLastSync on every
+        received frame, so the numerator covered the whole run while the
+        denominator covered the seconds since the last packet. The value
+        inflated and grew, the threshold was met from warm-up onwards, and the
+        third state bit was pinned to one: across the factorial, 99.1% of
+        1571457 decisions landed on a row with that bit set, which left the
+        agent four reachable rows out of eight.
+        """
+        remaining = self.INITIAL_REMAINING_BATTERY - self._spent_charge()
+        return max(0.0, remaining / float(self.INITIAL_REMAINING_BATTERY))
+
+    def map_discrete_state_to_number(self, discrete_state):
+        """The row of the Q-table for an already discretised state."""
+        return int(''.join(str(bit) for bit in discrete_state), 2)
 
     def map_state_to_number(self, list_state_variables):
         discrete_state_variables = self.discretize_variables(list_state_variables)
@@ -479,15 +611,17 @@ class SchedulingFunctionQlearningSBRC24(SchedulingFunctionBase):
         current_vector = self.Q_table[state]
         return np.argmax(current_vector)
     
-    def compute_q_table(self,list_state_variables,list_next_state_variables,action):
-        curr_state = self.map_state_to_number(list_state_variables)
-        next_state = self.map_state_to_number(list_next_state_variables)
-        #compute deltaQ
-        reward = self.compute_reward(list_next_state_variables)
+    def compute_q_table(self, curr_state, next_state, action, reward):
+        """Equations 2 and 3, on the row the action was taken in.
+
+        The rows and the reward arrive already computed. Deriving them here
+        called map_state_to_number twice and compute_reward once more, and each
+        of those re-runs the whole discretisation.
+        """
         best_next_q = self.return_best_q_value(next_state)
-        temporal_difference = reward + self.BETA * best_next_q - self.Q_table[curr_state][action]
-        deltaQ = reward + self.BETA * self.return_best_q_value(next_state)
-        #compute Q_table[curr_state][action]
+        temporal_difference = (
+            reward + self.BETA * best_next_q - self.Q_table[curr_state][action]
+        )
         self.Q_table[curr_state][action] += self.ALFA * temporal_difference
     
     def _compute_queue_ratio(self):
@@ -677,7 +811,15 @@ class SchedulingFunctionQlearningSBRC24(SchedulingFunctionBase):
             cell_options  = cell_options,
             cell_list_len = self.DEFAULT_CELL_LIST_LEN
         )
-        assert len(cell_list) > 0
+        if not cell_list:
+            # A 6P timeout retries this request, and by then the cells it meant
+            # to delete can be gone: the transaction that timed out may have
+            # been applied at the far end, or the agent may have removed them
+            # since. There is no work left to ask for, and asserting turns that
+            # into a dead run. Give up on this neighbour the way the retry
+            # limit does. Same guard as Qlearning.py and RLSF.py.
+            self.retry_count[parent] = -1
+            return
 
         # prepare callback
         callback = self._create_delete_request_callback(
@@ -1021,6 +1163,13 @@ class SchedulingFunctionQlearningSBRC24(SchedulingFunctionBase):
             cell_option,
         ):
 
+        if num_cells == 0:
+            # Equation 12 reaches zero in state 000, and the manuscript says
+            # so. Negotiating zero cells still costs a request, a response and
+            # a slot in the transaction table, and moves nothing, which makes
+            # the action indistinguishable from idling except for the energy.
+            return
+
         cell_list = self._create_available_cell_list(self.DEFAULT_CELL_LIST_LEN)
         # prepare _callback which is passed to SixP.send_request()
         callback = self._create_add_request_callback(
@@ -1046,10 +1195,12 @@ class SchedulingFunctionQlearningSBRC24(SchedulingFunctionBase):
             num_cells
         ):
 
-        cells_to_delete = self._get_unused_cells(cell_option)
-        if num_cells > len(cells_to_delete):
-            num_cells = 1
-        if len(cells_to_delete) >= 1:
+        cells_to_delete = self._get_cells_to_delete(cell_option)
+        # ask for as many as there are, rather than dropping to one: this used
+        # to replace a chosen magnitude of two or three with one whenever the
+        # candidates were fewer than asked for
+        num_cells = min(num_cells, len(cells_to_delete))
+        if num_cells >= 1:
             callback = self._create_delete_request_callback(
                 preferred_parent,
                 len(cells_to_delete),
