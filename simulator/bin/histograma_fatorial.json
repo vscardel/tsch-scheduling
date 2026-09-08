@@ -1,0 +1,116 @@
+{
+  "qlearningSBRC24": {
+    "rows": 8, 
+    "never_visited": [], 
+    "largest_share": 0.8134361932906851, 
+    "visits": {
+      "0": 8410, 
+      "1": 1278280, 
+      "2": 3016, 
+      "3": 158275, 
+      "4": 1197, 
+      "5": 69070, 
+      "6": 1544, 
+      "7": 51665
+    }, 
+    "greedy_share": 0.880598705532509, 
+    "coverage": 0.33712860176999926, 
+    "decisions": 1571457
+  }, 
+  "queue": {
+    "rows": 2, 
+    "never_visited": [], 
+    "largest_share": 0.7103937361614735, 
+    "visits": {
+      "0": 132828, 
+      "1": 54150
+    }, 
+    "greedy_share": 0.8804725689653328, 
+    "coverage": 0.8682120880347797, 
+    "decisions": 186978
+  }, 
+  "traffic_charge": {
+    "rows": 4, 
+    "never_visited": [], 
+    "largest_share": 0.44399074166408614, 
+    "visits": {
+      "0": 84594, 
+      "1": 31825, 
+      "2": 34166, 
+      "3": 39946
+    }, 
+    "greedy_share": 0.6290314961869722, 
+    "coverage": 0.9342421507941954, 
+    "decisions": 190531
+  }, 
+  "charge": {
+    "rows": 2, 
+    "never_visited": [], 
+    "largest_share": 0.5970098717432296, 
+    "visits": {
+      "0": 102266, 
+      "1": 69031
+    }, 
+    "greedy_share": 0.7703112138566349, 
+    "coverage": 0.972672856682434, 
+    "decisions": 171297
+  }, 
+  "traffic": {
+    "rows": 2, 
+    "never_visited": [], 
+    "largest_share": 0.6239177610237365, 
+    "visits": {
+      "0": 111554, 
+      "1": 67242
+    }, 
+    "greedy_share": 0.736979574487125, 
+    "coverage": 0.9552279724115164, 
+    "decisions": 178796
+  }, 
+  "queue_charge": {
+    "rows": 4, 
+    "never_visited": [], 
+    "largest_share": 0.38774036146512153, 
+    "visits": {
+      "0": 72471, 
+      "1": 58587, 
+      "2": 42311, 
+      "3": 13537
+    }, 
+    "greedy_share": 0.8639904550950745, 
+    "coverage": 0.9070367098423155, 
+    "decisions": 186906
+  }, 
+  "traffic_queue": {
+    "rows": 4, 
+    "never_visited": [], 
+    "largest_share": 0.43762145782325623, 
+    "visits": {
+      "0": 79718, 
+      "1": 48180, 
+      "2": 38157, 
+      "3": 16107
+    }, 
+    "greedy_share": 0.6203050032388753, 
+    "coverage": 0.9055255142718273, 
+    "decisions": 182162
+  }, 
+  "traffic_queue_charge": {
+    "rows": 8, 
+    "never_visited": [], 
+    "largest_share": 0.2534379700349657, 
+    "visits": {
+      "0": 51897, 
+      "1": 26977, 
+      "2": 32078, 
+      "3": 29579, 
+      "4": 44547, 
+      "5": 5001, 
+      "6": 2715, 
+      "7": 11978
+    }, 
+    "greedy_share": 0.4753628425761335, 
+    "coverage": 0.8803557994856258, 
+    "decisions": 204772
+  }
+}

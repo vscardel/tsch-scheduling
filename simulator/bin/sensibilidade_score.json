@@ -1,0 +1,35 @@
+{
+  "pesos": {
+    "total": 85, 
+    "primeiro": {
+      "qlearningSBRC24": 74, 
+      "baseline": 11
+    }
+  }, 
+  "base": [
+    "qlearningSBRC24", 
+    "traffic_queue_charge", 
+    "charge", 
+    "queue", 
+    "baseline"
+  ], 
+  "tudo": {
+    "total": 130, 
+    "primeiro": {
+      "qlearningSBRC24": 119, 
+      "baseline": 11
+    }
+  }, 
+  "limiares": {
+    "total": 25, 
+    "primeiro": {
+      "qlearningSBRC24": 25
+    }
+  }, 
+  "suavidade": {
+    "total": 20, 
+    "primeiro": {
+      "qlearningSBRC24": 20
+    }
+  }
+}

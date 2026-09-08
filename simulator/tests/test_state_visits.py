@@ -57,3 +57,15 @@ def test_an_action_count_does_not_need_to_know_how_many_actions_there_are():
     stats = empty_state_stats()
     record_action(stats, 0, 7, explored=True)
     assert stats['STATE_ACTION']['0']['explored'] == {'7': 1}
+
+
+def test_a_stateless_agent_lands_in_row_zero():
+    """With no state factors the table has one row and every decision is in
+    it. int('', 2) raised instead, which is why that cell had never run."""
+    from SimEngine.Mote.scheduling_functions.Qlearning import (
+        SchedulingFunctionQlearning
+    )
+    mapear = SchedulingFunctionQlearning.__dict__['map_discrete_state_to_number']
+    assert mapear(None, {}) == 0
+    assert mapear(None, {'queue': 1}) == 1
+    assert mapear(None, {'queue': 0}) == 0

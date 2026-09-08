@@ -84,11 +84,11 @@
       ]
     }
   },
-  "log_directory_name": "results_dynq",
+  "log_directory_name": "diag_tqc",
   "version": 0,
   "post": [],
   "execution": {
-    "numRuns": 10,
-    "numCPUs": 8
+    "numRuns": 3,
+    "numCPUs": 3
   }
 }

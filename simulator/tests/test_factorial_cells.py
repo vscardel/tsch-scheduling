@@ -34,3 +34,15 @@ def test_every_cell_of_the_factorial_has_a_distinct_name():
         ))
     cells.append(cell_name(['qlearningSBRC24']))
     assert len(set(cells)) == len(cells) == 9
+
+
+def test_the_empty_cell_can_run_the_learner_instead_of_msf():
+    """The factorial's empty cell runs MSF, so every published main effect
+    compares a state factor against a different scheduling function. Running
+    the learner with no state factors is the cell the design actually needs."""
+    assert cell_name([], empty_is_learner=True) == 'sem_estado'
+    assert cell_name([], empty_is_learner=False) == 'baseline'
+
+
+def test_a_cell_with_factors_is_unaffected_by_the_switch():
+    assert cell_name(['queue'], empty_is_learner=True) == 'queue'

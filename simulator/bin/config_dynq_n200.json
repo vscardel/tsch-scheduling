@@ -1,0 +1,94 @@
+{
+    "get_sync_node_info": null, 
+    "logging": [
+        "app.rx", 
+        "app.tx", 
+        "radio.stats", 
+        "secjoin.joined", 
+        "tsch.synced", 
+        "sixp.tx", 
+        "sixp.rx", 
+        "sixp.comp", 
+        "sixp.timeout", 
+        "tsch.add_cell", 
+        "tsch.delete_cell", 
+        "packet_dropped"
+    ], 
+    "settings": {
+        "regular": {
+            "app_pkPeriodVar": 0.05, 
+            "rpl_of": "OF0", 
+            "tsch_max_payload_len": 90, 
+            "tsch_keep_alive_interval": 10, 
+            "secjoin_enabled": true, 
+            "motes_eui64": [], 
+            "exec_minutesPerRun": null, 
+            "radio_stats_log_period_s": 60, 
+            "conn_simulate_ack_drop": false, 
+            "app_burstTimestamp": null, 
+            "tsch_tx_queue_size": 5, 
+            "MIN_EPSLON": 0.19096869607843248, 
+            "exec_randomSeed": 1, 
+            "tsch_max_tx_retries": 4, 
+            "EPSLON_THRESHOLD": 0.5848451781607432, 
+            "rpl_daoPeriod": 60, 
+            "fragmentation_ff_vrb_table_size": 50, 
+            "conn_random_init_min_neighbors": 3, 
+            "phy_numChans": 16, 
+            "app_pkLength": 90, 
+            "tsch_slotframeLength": 101, 
+            "rpl_extensions": [
+                "dis_unicast"
+            ], 
+            "factorial_combinations": [
+                "traffic", 
+                "queue", 
+                "charge"
+            ], 
+            "conn_random_init_min_pdr": 0.5, 
+            "app_pkPeriod": 60, 
+            "W_UTILIZATION": 1, 
+            "app": "AppRandom", 
+            "W_THROUGHPUT": 1, 
+            "ALFA": 0.7863156043331933, 
+            "MAX_TX_CELLS_PASSED": 100, 
+            "DISCRETIZE_ENERGY_PARAMETER": 0.3, 
+            "BETA": 0.4377865110128446, 
+            "W_LATENCY": 1, 
+            "EPSLON_DECAY_RATE": 0.01508053679982252, 
+            "MAX_RX_CELLS_PASSED": 100, 
+            "W_ENERGY": 1, 
+            "STATE_SIZE": 8, 
+            "exec_numSlotframesPerRun": 3750, 
+            "tsch_clock_frequency": 32768, 
+            "tsch_slotDuration": 0.01, 
+            "SMART_CELL_REMOVAL": true, 
+            "fragmentation": "FragmentForwarding", 
+            "tsch_probBcast_ebProb": 0.33, 
+            "tsch_clock_max_drift_ppm": 30, 
+            "app_burstNumPackets": 0, 
+            "fragmentation_ff_discard_vrb_entry_policy": [], 
+            "conn_class": "Random", 
+            "conn_trace": null, 
+            "conn_random_square_side": 4.0, 
+            "sixlowpan_reassembly_buffers_num": 1, 
+            "SLOTFRAME_INTERVAL_SIZE": 10, 
+            "sf_class": "Qlearning", 
+            "ACTION_STATE_SIZE": 3, 
+            "MAX_SLOTFRAMES_BETWEEN_DECISIONS": 50, 
+            "LAMBDA": 2
+        }, 
+        "combination": {
+            "exec_numMotes": [
+                200
+            ]
+        }
+    }, 
+    "log_directory_name": "dynq_n200", 
+    "version": 0, 
+    "post": [], 
+    "execution": {
+        "numRuns": 30, 
+        "numCPUs": 10
+    }
+}

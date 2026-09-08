@@ -930,10 +930,21 @@ class SchedulingFunctionQlearning(SchedulingFunctionBase):
         return discrete_state
 
     def map_discrete_state_to_number(self, discrete_state):
-        """The row of the Q-table for an already discretised state."""
+        """The row of the Q-table for an already discretised state.
+
+        With no state factors at all the table has a single row, and every
+        decision lands in it. That cell is what the 2^k factorial needs in
+        order to mean what it says: its empty cell runs MSF, so every main
+        effect published from it compares a state factor against a different
+        scheduling function rather than against the same agent without that
+        factor. int('', 2) raised instead of returning row zero, which is why
+        the cell had never been run.
+        """
         binary_number = ''
         for key, value in discrete_state.items():
             binary_number += str(value)
+        if not binary_number:
+            return 0
         return int(binary_number, 2)
 
     def map_state_to_number(self, state):

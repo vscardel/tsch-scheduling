@@ -180,9 +180,11 @@ def load_evaluations(output_folder):
         return []
 
 
-def cell_name(factor_combination):
+def cell_name(factor_combination, empty_is_learner=False):
     """The folder a cell of the factorial writes to."""
-    return '_'.join(factor_combination) if factor_combination else 'baseline'
+    if factor_combination:
+        return '_'.join(factor_combination)
+    return 'sem_estado' if empty_is_learner else 'baseline'
 
 
 def load_optimal_parameters(factor_combination):
@@ -370,6 +372,15 @@ if __name__ == '__main__':
     parser.add_argument('-is_min','--experiment_type', type=str, help='determines the time of experiment (minimization or 2^k)', required=True)
 
     parser.add_argument(
+        '--empty-cell-learner', action='store_true',
+        help=(
+            'run the empty cell as the learner with no state factors, under '
+            'the name sem_estado, instead of as MSF under the name baseline. '
+            'The factorial needs this: with MSF in that cell, a main effect '
+            'compares a state factor against another scheduling function.'
+        )
+    )
+    parser.add_argument(
         '--cells',
         help=(
             'run only these cells of the factorial, by folder name, comma '
@@ -492,7 +503,9 @@ if __name__ == '__main__':
             if args.cells else None
         )
         if pedidas:
-            conhecidas = set(cell_name(c) for c in all_combinations)
+            conhecidas = set(
+                cell_name(c, args.empty_cell_learner) for c in all_combinations
+            )
             desconhecidas = [c for c in pedidas if c not in conhecidas]
             if desconhecidas:
                 raise ValueError(
@@ -501,13 +514,14 @@ if __name__ == '__main__':
                     )
                 )
             all_combinations = [
-                c for c in all_combinations if cell_name(c) in pedidas
+                c for c in all_combinations
+                if cell_name(c, args.empty_cell_learner) in pedidas
             ]
 
         # run each combination
         for factor_combination in all_combinations:
 
-            cell = cell_name(factor_combination)
+            cell = cell_name(factor_combination, args.empty_cell_learner)
             output_folder = '{0}_{1}'.format(cell, args.tag) if args.tag else cell
 
             # empty combination
@@ -527,8 +541,8 @@ if __name__ == '__main__':
             settings['settings']['regular']['factorial_combinations'] = factor_combination
             settings['settings']['regular']['STATE_SIZE'] = 2**(len(factor_combination))
             
-            #baseline runs MSF
-            if not factor_combination:
+            #baseline runs MSF, unless the empty cell was asked to learn
+            if not factor_combination and not args.empty_cell_learner:
                 settings['settings']['regular']['sf_class'] = 'MSF'
             elif factor_combination == ['qlearningSBRC24']:
                 settings['settings']['regular']['sf_class'] = 'QlearningSBRC24'
