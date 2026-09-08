@@ -54,6 +54,25 @@ ARMS = [
     ('emsf',             'EMSF',            None,                   {}),
 ]
 
+# Does acting on what was learned beat acting at random? Each learner
+# against its own control, on the same seeds, with the table still being
+# updated in both, so the arms differ in consulting it and in nothing else.
+# The gain over the control is a paired effect size, which is
+# dimensionless, so it can be read across two learners whose rewards
+# cannot be compared directly.
+LEARNING_ARMS = [
+    ('dynq_aprendido',    'Qlearning',       'traffic_queue_charge',
+     {'LEARNED_POLICY': True}),
+    ('dynq_aleatorio',    'Qlearning',       'traffic_queue_charge',
+     {'LEARNED_POLICY': False}),
+    ('qstatic_aprendido', 'QlearningSBRC24', 'qlearningSBRC24',
+     {'LEARNED_POLICY': True}),
+    ('qstatic_aleatorio', 'QlearningSBRC24', 'qlearningSBRC24',
+     {'LEARNED_POLICY': False}),
+]
+
+ALL_ARMS = ARMS + LEARNING_ARMS
+
 FACTORS = ['traffic', 'queue', 'charge']
 
 
@@ -96,7 +115,9 @@ def main():
     pedidos = (
         [a.strip() for a in args.arms.split(',')] if args.arms else None
     )
-    arms = [a for a in ARMS if not pedidos or a[0] in pedidos]
+    arms = [a for a in ALL_ARMS if not pedidos or a[0] in pedidos]
+    if not pedidos:
+        arms = list(ARMS)      # the learning arms are asked for by name
     if pedidos:
         faltando = set(pedidos) - set(a[0] for a in arms)
         if faltando:

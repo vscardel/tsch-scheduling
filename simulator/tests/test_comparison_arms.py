@@ -9,7 +9,7 @@ import math
 
 import pytest
 
-from runComparison import ARMS, build_config, square_side
+from runComparison import ALL_ARMS, ARMS, build_config, square_side
 
 
 @pytest.fixture
@@ -19,7 +19,7 @@ def base():
 
 
 def arm(label):
-    return [a for a in ARMS if a[0] == label][0]
+    return [a for a in ALL_ARMS if a[0] == label][0]
 
 
 def test_density_is_held_constant_as_the_network_grows():
@@ -90,3 +90,55 @@ def test_all_six_arms_are_present():
     assert [a[0] for a in ARMS] == [
         'dynq', 'dynq_sem_remocao', 'qstatic', 'rlsf', 'msf', 'emsf'
     ]
+
+
+# ------------------------------------------------- the arms that measure learning
+
+
+@pytest.mark.parametrize('learner', ['dynq', 'qstatic'])
+def test_the_control_differs_from_its_arm_in_one_key(base, learner):
+    """The check that has caught this twice already.
+
+    Two arms came out byte identical in this revision because a hyperparameter
+    was applied by position and never reached the simulator. A difference of
+    exactly zero on every metric means plumbing, not a tie, so the difference
+    between an arm and its control is pinned to the single key it is supposed
+    to be.
+    """
+    aprendido = build_config(base, arm(learner + '_aprendido'), 50, 10, 10, 3750)
+    aleatorio = build_config(base, arm(learner + '_aleatorio'), 50, 10, 10, 3750)
+    a = aprendido['settings']['regular']
+    b = aleatorio['settings']['regular']
+    diferencas = [k for k in set(a) | set(b) if a.get(k) != b.get(k)]
+    assert diferencas == ['LEARNED_POLICY']
+    assert a['LEARNED_POLICY'] is True
+    assert b['LEARNED_POLICY'] is False
+
+
+@pytest.mark.parametrize('label', [
+    'dynq_aprendido', 'dynq_aleatorio', 'qstatic_aprendido', 'qstatic_aleatorio'
+])
+def test_both_learners_keep_the_removal_rule_in_every_learning_arm(base, label):
+    """The rule is what the previous comparison turned on, so it is held
+    constant here rather than varied alongside the thing being measured."""
+    settings = build_config(base, arm(label), 50, 10, 10, 3750)
+    regular = settings['settings']['regular']
+    assert regular.get('SMART_CELL_REMOVAL') is not False
+    assert regular.get('QSTATIC_SMART_CELL_REMOVAL') is not False
+
+
+def test_the_learned_arm_is_the_scheduler_it_is_named_after(base):
+    """dynq_aprendido has to be exactly dynq, or the gain over the control is
+    measured on a method nobody else ran. Learning is on by default, so the
+    two configurations come out identical and the control is the departure."""
+    dynq = build_config(base, arm('dynq'), 50, 10, 10, 3750)
+    aprendido = build_config(base, arm('dynq_aprendido'), 50, 10, 10, 3750)
+    a = dynq['settings']['regular']
+    b = aprendido['settings']['regular']
+    assert [k for k in set(a) | set(b) if a.get(k) != b.get(k)] == []
+
+
+def test_learning_arms_are_asked_for_by_name(base):
+    """A plain run of the comparison is the six arms it always was, so nobody
+    runs eight hours of controls by forgetting a flag."""
+    assert 'dynq_aprendido' not in [a[0] for a in ARMS]
