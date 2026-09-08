@@ -172,3 +172,4 @@ simulator/gui/*
 simulator/bin/config_*.json
 simulator/bin/*.png
 simulator/bin/*_evaluations.json
+simulator/bin/sensitivity_manifest.json
