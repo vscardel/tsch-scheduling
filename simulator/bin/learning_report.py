@@ -276,6 +276,249 @@ def convergence(churn, bins):
     return ultimo + 1
 
 
+
+# ------------------------------------------------------- the convergence test
+
+"""Three things have to hold at once, and each is reported on its own.
+
+Watkins and Dayan guarantee convergence only when the learning rate shrinks
+and every state-action pair is visited without end. Neither learner meets
+both, so the asymptotic guarantee is not available and is not claimed. What is
+used instead is the practical criterion: the reward curve has levelled off,
+the table has stopped moving, and the policy has stopped changing its mind.
+
+Failing one and passing two is a diagnosis rather than a verdict, which is why
+the three are never collapsed into a single number.
+"""
+
+FLAT_CONFIDENCE = 0.95
+STEP_TOLERANCE = 0.01     # of the reward scale
+SETTLED_SHARE = 0.95      # of the visited rows
+
+
+def percentil(valores, p):
+    if not valores:
+        return 0.0
+    ordenado = sorted(valores)
+    return ordenado[min(len(ordenado) - 1, int(p * len(ordenado)))]
+
+
+def decode_policy(codigo, rows, base):
+    """The greedy action of each row, back out of the integer."""
+    saida = []
+    for _ in range(rows):
+        saida.append(codigo % base)
+        codigo //= base
+    return saida
+
+
+def mote_settled(mote, span, bins):
+    """Per window, the share of visited rows already at their final action.
+
+    Rows the mote never stood in are left out. A row it never reached holds
+    the action its tie-break gave it and has not settled on anything.
+    """
+    tabela = mote.get('Q_TABLE', {})
+    decisoes = decisions_of(mote)
+    if not tabela or not decisoes or 'policy_code' not in decisoes[-1]:
+        return [None] * bins
+    ordem = sorted(tabela, key=lambda r: int(r))
+    base = max(len(valores) for valores in tabela.values())
+    visitadas = set(mote.get('STATE_VISITS', {}))
+    # the visit counter is keyed by string, and a table read back from
+    # JSON is too, but one still in memory need not be
+    indices = [
+        i for i, linha in enumerate(ordem) if str(linha) in visitadas
+    ]
+    if not indices or base < 2:
+        return [None] * bins
+
+    final = decode_policy(decisoes[-1]['policy_code'], len(ordem), base)
+    ultimo = {}
+    for registro in decisoes:
+        ultimo[bin_of(registro['asn'], span, bins)] = registro['policy_code']
+
+    serie = []
+    for i in range(bins):
+        codigo = ultimo.get(i)
+        if codigo is None:
+            serie.append(None)
+            continue
+        politica = decode_policy(codigo, len(ordem), base)
+        iguais = sum(1 for j in indices if politica[j] == final[j])
+        serie.append(iguais / len(indices))
+    return forward_fill(serie)
+
+
+def settled_curve(runs, span, bins):
+    """Mean over motes, then over runs, of the share of settled rows."""
+    por_run = []
+    for _, motes in sorted(runs.items()):
+        por_mote = [mote_settled(m, span, bins) for m in motes]
+        linha = []
+        for i in range(bins):
+            valores = [s[i] for s in por_mote if s[i] is not None]
+            linha.append(sum(valores) / len(valores) if valores else None)
+        por_run.append(linha)
+    media, _, _ = band(por_run)
+    return media
+
+
+def settled_from(curva, bins):
+    """The first window from which the policy stays settled to the end.
+
+    The stretch has to cover at least the final third, which is the same
+    stretch the other two parts of the criterion are read over. Without that
+    floor the last window always counts as settled, since it is the window the
+    final policy is taken from, and every run would report convergence in its
+    own last moment.
+    """
+    inicio = None
+    for i in range(bins - 1, -1, -1):
+        valor = curva[i] if i < len(curva) else None
+        if valor is None:
+            continue
+        if valor >= SETTLED_SHARE:
+            inicio = i
+        else:
+            break
+    if inicio is None or inicio > 2 * bins // 3:
+        return None
+    return inicio
+
+
+def flatness(runs, span, bins):
+    """Whether the reward curve has stopped moving, and where it stopped.
+
+    The last third against the middle third, bootstrapped over runs. Flat when
+    the interval contains zero. The level is reported beside it, because a
+    curve that has levelled off below zero has not converged on anything worth
+    having.
+    """
+    diferencas = []
+    niveis = []
+    for _, motes in sorted(runs.items()):
+        serie = run_series(motes, span, bins)['reward']
+        fim = media_de(ultimo_terco(serie))
+        meio = media_de(serie[len(serie) // 3: 2 * len(serie) // 3])
+        if fim is None or meio is None:
+            continue
+        diferencas.append(fim - meio)
+        niveis.append(fim)
+    if len(diferencas) < 3:
+        return {'flat': None, 'change': None, 'ci': (None, None), 'level': None}
+
+    rng = random.Random(1)
+    n = len(diferencas)
+    medias = sorted(
+        sum(diferencas[rng.randrange(n)] for _ in range(n)) / n
+        for _ in range(2000)
+    )
+    baixo = medias[int(0.025 * 2000)]
+    alto = medias[int(0.975 * 2000)]
+    return {
+        'flat'  : baixo <= 0 <= alto,
+        'change': sum(diferencas) / n,
+        'ci'    : (baixo, alto),
+        'level' : sum(niveis) / len(niveis),
+    }
+
+
+def step_sizes(runs, span, bins):
+    """How big the updates still are at the end, against the reward scale.
+
+    The size of an update is recorded rather than derived from the configured
+    learning rate, so this reads the same whether the rate is constant or on a
+    schedule. The scale is the spread of the reward rather than its mean,
+    which stays defined when the mean passes through zero.
+    """
+    recompensas = []
+    finais = []
+    corte = 2 * bins // 3
+    for motes in runs.values():
+        for mote in motes:
+            for registro in decisions_of(mote):
+                recompensas.append(registro['reward'])
+                if 'delta_q' not in registro:
+                    continue
+                if bin_of(registro['asn'], span, bins) >= corte:
+                    finais.append(abs(registro['delta_q']))
+    if not recompensas or not finais:
+        return {'settled': None, 'step': None, 'scale': None, 'tolerance': None}
+
+    escala = percentil(recompensas, 0.95) - percentil(recompensas, 0.05)
+    passo = percentil(finais, 0.95)
+    tolerancia = STEP_TOLERANCE * escala
+    if escala <= 0:
+        # a reward that never varies gives nothing to be a hundredth of, and
+        # nothing to learn either. Undecidable rather than failed.
+        return {'settled': None, 'step': passo, 'scale': escala,
+                'tolerance': tolerancia}
+    return {
+        'settled'  : passo < tolerancia,
+        'step'     : passo,
+        'scale'    : escala,
+        'tolerance': tolerancia,
+    }
+
+
+def verdict(runs, bins):
+    """The three parts, and whether all of them hold."""
+    span = span_of(runs)
+    curva = settled_curve(runs, span, bins)
+    inicio = settled_from(curva, bins)
+    partes = {
+        'reward_flat' : flatness(runs, span, bins),
+        'table_still' : step_sizes(runs, span, bins),
+        'policy_settled': {
+            # a trace with no policy_code at all is undecidable, not failed:
+            # the runs made before the field existed are still readable
+            'settled': None if not [v for v in curva if v is not None]
+                       else inicio is not None,
+            'from_bin': inicio,
+            'from_fraction': (inicio / bins) if inicio is not None else None,
+            'final_share': curva[-1] if curva else None,
+        },
+        'curve': curva,
+    }
+    partes['converged'] = bool(
+        partes['reward_flat']['flat']
+        and partes['table_still']['settled']
+        and partes['policy_settled']['settled']
+    )
+    return partes
+
+
+def imprimir_veredito(v, bins):
+    a = v['reward_flat']
+    b = v['table_still']
+    c = v['policy_settled']
+    print('  criterio de convergencia:')
+    if a['flat'] is None:
+        print('    (a) recompensa achatou:   sem rodadas suficientes')
+    else:
+        print('    (a) recompensa achatou:   %s   variacao %+.4f '
+              '[%+.4f,%+.4f], nivel %.4f' % (
+                  'sim' if a['flat'] else 'NAO', a['change'],
+                  a['ci'][0], a['ci'][1], a['level']))
+    if b['settled'] is None:
+        print('    (b) tabela parou:         sem dados de |dQ|')
+    else:
+        print('    (b) tabela parou:         %s   |dQ| p95 %.5f contra '
+              'tolerancia %.5f (1%% de %.3f)' % (
+                  'sim' if b['settled'] else 'NAO', b['step'],
+                  b['tolerance'], b['scale']))
+    if c['settled'] is None:
+        print('    (c) politica assentou:    sem policy_code no traco')
+    elif c['settled']:
+        print('    (c) politica assentou:    sim   a partir de %.0f%% da rodada'
+              % (100.0 * c['from_fraction']))
+    else:
+        print('    (c) politica assentou:    NAO  chegou a %.1f%% das linhas'
+              % (100.0 * (c['final_share'] or 0)))
+    print('    veredito: %s' % ('CONVERGIU' if v['converged'] else 'nao convergiu'))
+
+
 # ------------------------------------------------------------------ report
 
 def summarise(nome, runs, bins):
@@ -308,6 +551,7 @@ def summarise(nome, runs, bins):
         'td_last_third'    : media_de(ultimo_terco(curvas['td_error']['mean'])),
         'converged_at_bin' : parada,
         'greedy_share'     : greedy_share(runs),
+        'verdict'          : verdict(runs, bins),
     }
     imprimir(nome, resumo, bins)
     return resumo
@@ -379,6 +623,7 @@ def imprimir(nome, r, bins):
         100.0 * t['share_with_preference']))
     print('  decisoes escolhidas pela tabela: %.1f%%' % (
         100.0 * r['greedy_share']))
+    imprimir_veredito(r['verdict'], bins)
 
 
 CAVEAT = """
