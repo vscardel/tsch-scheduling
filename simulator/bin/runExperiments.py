@@ -188,14 +188,17 @@ def cell_name(factor_combination, empty_is_learner=False):
 
 
 def load_optimal_parameters(factor_combination):
-    paramaters = None
-    parameters_list = [None] * len(parameters_position)
+    """Every hyperparameter the file holds, by name.
+
+    It used to return a positional list built from parameters_position, which
+    is the search space of whatever -sf the run was given. The factorial runs
+    with -sf Qlearning, which has four hyperparameters, so the Q-static cell
+    silently lost its fifth: EPSLON_THRESHOLD never left the file, and that
+    cell ran on config.json's 0.58 instead of the 0.30 the optimisation found.
+    Reading by name cannot drop a parameter the file bothered to record.
+    """
     with open('./{0}_parameters.json'.format(factor_combination), 'r') as f:
-        parameters = json.load(f)
-        # for compatibility
-        for position, name in enumerate(parameters_position):
-            parameters_list[position] = parameters[name]
-    return parameters_list
+        return json.load(f)
 
 def configure_settings(settings, parameters):
     settings['settings']['combination']['exec_numMotes'] = args.combinations
@@ -212,11 +215,15 @@ def configure_settings(settings, parameters):
     settings['log_directory_name']= args.output_folder
     settings['get_sync_node_info'] = args.sync_required
 
-    # Configure simulator with the parameters
+    # Configure simulator with the parameters. The optimiser hands over a
+    # positional list, in the order of parameters_position; a parameters file
+    # hands over a mapping, and every key in it is applied.
     if parameters:
-        for position, parameter_name in enumerate(parameters_position):
-            parameter_value = parameters[position]
-            settings['settings']['regular'][parameter_name] = parameter_value
+        if isinstance(parameters, dict):
+            settings['settings']['regular'].update(parameters)
+        else:
+            for position, parameter_name in enumerate(parameters_position):
+                settings['settings']['regular'][parameter_name] = parameters[position]
     return settings
 
 
