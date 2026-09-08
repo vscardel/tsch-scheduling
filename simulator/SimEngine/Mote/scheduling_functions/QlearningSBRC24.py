@@ -115,9 +115,15 @@ class SchedulingFunctionQlearningSBRC24(SchedulingFunctionBase):
         pass
         
     def stop(self):
+        """Give up the slotframe, keep the agent.
+
+        EPISODE used to be reset here as well, which undid the line above it:
+        epsilon is recomputed from the episode count on the next decision, so
+        zeroing it sent the mote back to epsilon at its maximum and another
+        several hundred decisions of pure exploration.
+        """
         self.mote.tsch.delete_slotframe(self.SLOTFRAME_HANDLE)
         self.EPSLON = self.MIN_EPSLON
-        self.EPISODE = 0
 
     def indication_neighbor_added(self, neighbor_mac_addr):
         pass # do nothing
@@ -361,8 +367,14 @@ class SchedulingFunctionQlearningSBRC24(SchedulingFunctionBase):
             return []
         
     def initialize_q_table(self,state_size,action_space_size):
+        """Create the rows that are missing, and leave the rest alone.
+
+        tsch calls start() on every resynchronisation, and this overwrote all
+        eight rows with zeros, so a mote lost everything it had learned each
+        time it fell out of sync and came back.
+        """
         for state in range(self.num_states):
-            self.Q_table[state] = [0]*action_space_size
+            self.Q_table.setdefault(state, [0]*action_space_size)
 
     def _get_available_slots(self):
         available_slots = self.mote.tsch.get_available_slots(self.SLOTFRAME_HANDLE)
@@ -776,7 +788,15 @@ class SchedulingFunctionQlearningSBRC24(SchedulingFunctionBase):
             cell_options  = cell_options,
             cell_list_len = self.DEFAULT_CELL_LIST_LEN
         )
-        assert len(cell_list) > 0
+        if not cell_list:
+            # A 6P timeout retries this request, and by then the cells it meant
+            # to delete can be gone: the transaction that timed out may have
+            # been applied at the far end, or the agent may have removed them
+            # since. There is no work left to ask for, and asserting turns that
+            # into a dead run. Give up on this neighbour the way the retry
+            # limit does. Same guard as Qlearning.py and RLSF.py.
+            self.retry_count[parent] = -1
+            return
 
         # prepare callback
         callback = self._create_delete_request_callback(
@@ -1119,6 +1139,13 @@ class SchedulingFunctionQlearningSBRC24(SchedulingFunctionBase):
             num_cells,
             cell_option,
         ):
+
+        if num_cells == 0:
+            # Equation 12 reaches zero in state 000, and the manuscript says
+            # so. Negotiating zero cells still costs a request, a response and
+            # a slot in the transaction table, and moves nothing, which makes
+            # the action indistinguishable from idling except for the energy.
+            return
 
         cell_list = self._create_available_cell_list(self.DEFAULT_CELL_LIST_LEN)
         # prepare _callback which is passed to SixP.send_request()

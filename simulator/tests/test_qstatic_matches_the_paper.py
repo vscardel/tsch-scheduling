@@ -271,3 +271,103 @@ def test_the_switch_is_off_unless_a_config_turns_it_on():
     import inspect
     fonte = inspect.getsource(QStatic.__init__)
     assert "'QSTATIC_SMART_CELL_REMOVAL', False" in fonte
+
+
+# ------------------------------------------------------------------- guards
+
+class _Sixp(object):
+    def __init__(self):
+        self.pedidos = []
+
+    def send_request(self, **kwargs):
+        self.pedidos.append(kwargs)
+
+
+class _Negotiator(object):
+    DEFAULT_CELL_LIST_LEN = 5
+
+    def __init__(self, occupied=None):
+        self.mote = type('M', (), {'sixp': _Sixp()})()
+        self.retry_count = {'parent': 1}
+        self.occupied = occupied if occupied is not None else []
+
+    _create_available_cell_list = lambda self, n: [{'slotOffset': 1}]
+    _create_occupied_cell_list = lambda self, **kw: self.occupied
+    _create_add_request_callback = lambda self, *a: None
+    _create_delete_request_callback = lambda self, *a: None
+
+    sixp_interface_add = QStatic.__dict__['sixp_interface_add']
+    _request_deleting_cells = QStatic.__dict__['_request_deleting_cells']
+
+
+def test_an_action_that_moves_no_cell_sends_no_6p():
+    """N_insert is zero in state 000, which the manuscript intends. The
+    request still cost a transaction and moved nothing."""
+    agente = _Negotiator()
+    agente.sixp_interface_add(
+        preferred_parent='parent', num_cells=0, cell_option=TX
+    )
+    assert agente.mote.sixp.pedidos == []
+
+
+def test_an_action_that_moves_cells_still_sends_6p():
+    agente = _Negotiator()
+    agente.sixp_interface_add(
+        preferred_parent='parent', num_cells=2, cell_option=TX
+    )
+    assert len(agente.mote.sixp.pedidos) == 1
+    assert agente.mote.sixp.pedidos[0]['numCells'] == 2
+
+
+def test_a_delete_retry_with_nothing_left_gives_up_instead_of_asserting():
+    """The 6P timeout retries, and by then the cells can be gone. The same
+    assertion killed runs in DynQ and in RL-SF before it was guarded there."""
+    agente = _Negotiator(occupied=[])
+    agente._request_deleting_cells('parent', 1, TX)
+    assert agente.retry_count['parent'] == -1
+    assert agente.mote.sixp.pedidos == []
+
+
+# ------------------------------------------------- surviving a resynchronisation
+
+class _Learner(object):
+    num_states = 8
+
+    def __init__(self):
+        self.Q_table = {}
+        self.EPISODE = 0
+        self.EPSLON = None
+        self.MIN_EPSLON = 0.1
+        self.mote = type('M', (), {
+            'tsch': type('T', (), {'delete_slotframe': lambda _s, h: None})()
+        })()
+        self.SLOTFRAME_HANDLE = 1
+
+    initialize_q_table = QStatic.__dict__['initialize_q_table']
+    stop = QStatic.__dict__['stop']
+
+
+def test_a_resynchronisation_does_not_wipe_what_was_learned():
+    """tsch calls start() on every resync, and start() initialises the table."""
+    agente = _Learner()
+    agente.initialize_q_table(3, 3)
+    agente.Q_table[5][1] = 4.2
+    agente.initialize_q_table(3, 3)
+    assert agente.Q_table[5][1] == 4.2
+
+
+def test_initialising_still_creates_every_row():
+    agente = _Learner()
+    agente.initialize_q_table(3, 3)
+    assert sorted(agente.Q_table) == list(range(8))
+    assert agente.Q_table[0] == [0, 0, 0]
+
+
+def test_stopping_does_not_send_the_agent_back_to_full_exploration():
+    """EPISODE was reset alongside EPSLON, and epsilon is recomputed from the
+    episode count on the next decision, so the reset undid the line above it."""
+    agente = _Learner()
+    agente.EPISODE = 400
+    agente.stop()
+    assert agente.EPISODE == 400
+    assert agente.EPSLON == agente.MIN_EPSLON
