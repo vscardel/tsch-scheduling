@@ -11,8 +11,9 @@ import json
 import pytest
 
 from runSensitivity import (
-    CORE_GRIDS, CORE_LEFT_ALONE, LEARNERS, arm_name, baseline_settings,
-    build_config, factors_of, manifest, plan
+    CORE_GRIDS, CORE_LEFT_ALONE, CORE_REFERENCES, DISTURBANCES, LEARNERS,
+    arm_name, baseline_settings, build_config, factors_of, load_anchor,
+    manifest, plan
 )
 from runExperiments import search_space
 
@@ -219,3 +220,147 @@ def test_the_decay_grid_matches_how_often_a_cell_is_updated(base):
             if f[1] == 'ALFA_DECAY_TAU'
         ][0]
         assert max(grade) <= 10
+
+
+# ------------------------------------------------- the anchor and its box
+
+ANCORA = {'dynq': {'ALFA': 0.1, 'MIN_EPSLON': 0.1}, 'qstatic': {'BETA': 0.95}}
+
+
+@pytest.fixture
+def arms_ancorados(base, grupo):
+    return plan(base, ['dynq', 'qstatic'], grupo, None, ANCORA)
+
+
+def ancorado(base, arms, label, motes=50):
+    arm = [a for a in arms if a[0] == label][0]
+    return build_config(
+        base, arm, motes, 10, 10, 15000, ANCORA, True
+    )['settings']['regular']
+
+
+def test_the_anchor_moves_the_baseline_and_nothing_else(base):
+    """Every departure of an anchored arm is still its own one setting."""
+    arms = plan(base, ['dynq', 'qstatic'], 'core', None, ANCORA)
+    for label, learner, setting, valor in arms:
+        if setting is None:
+            continue
+        linha_base = ancorado(base, arms, '{0}_base'.format(learner))
+        braco = ancorado(base, arms, label)
+        diferencas = [
+            k for k in set(linha_base) | set(braco)
+            if linha_base.get(k) != braco.get(k)
+        ]
+        assert diferencas == [setting], (label, diferencas)
+        assert braco[setting] == valor
+
+
+def test_the_anchored_baseline_differs_from_the_published_one_by_the_anchor(base):
+    for learner, mudancas in ANCORA.items():
+        publicado = baseline_settings(base, learner)
+        com_ancora = baseline_settings(base, learner, ANCORA)
+        diferentes = set(
+            k for k in set(publicado) | set(com_ancora)
+            if publicado.get(k) != com_ancora.get(k)
+        )
+        assert diferentes == set(mudancas), (learner, diferentes)
+        for chave, valor in mudancas.items():
+            assert com_ancora[chave] == valor
+
+
+def test_no_anchored_arm_repeats_the_anchor_under_another_name(base, arms_ancorados):
+    for label, learner, setting, valor in arms_ancorados:
+        if setting is None:
+            continue
+        # a setting with no entry defaults in the learner, as plan reads it
+        publicado = baseline_settings(base, learner, ANCORA).get(setting, 0)
+        assert valor != publicado, label
+
+
+def test_every_anchor_value_lies_inside_its_range(base):
+    """The point the sweep departs from is one the literature admits.
+
+    That is the whole reason for the anchor: a coordinate sweep reports
+    sensitivity around one point, and the point has to be defensible.
+    """
+    for learner, mudancas in ANCORA.items():
+        faixas = dict(search_space(LEARNERS[learner]['sf_class']))
+        for chave, valor in mudancas.items():
+            baixo, alto = faixas[chave]
+            assert baixo <= valor <= alto, (learner, chave, valor)
+
+
+def test_the_published_values_outside_the_box_are_run_as_references(base):
+    """Each one gets an arm on the curve of its own factor.
+
+    Reporting that the box costs nothing, or that it costs something, needs
+    the out of range value measured in the same scenario as the rest.
+    """
+    arms = plan(base, ['dynq', 'qstatic'], 'core', None, ANCORA)
+    for learner, referencias in CORE_REFERENCES.items():
+        faixas = dict(search_space(LEARNERS[learner]['sf_class']))
+        for setting, valor in referencias:
+            baixo, alto = faixas[setting]
+            assert not baixo <= valor <= alto, (learner, setting, valor)
+            iguais = [
+                a for a in arms
+                if a[1] == learner and a[2] == setting and a[3] == valor
+            ]
+            assert len(iguais) == 1, (learner, setting, valor, iguais)
+
+
+def test_the_references_only_appear_in_the_core_sweep(base):
+    for grupo in ('tarefa', 'legado'):
+        arms = plan(base, ['dynq', 'qstatic'], grupo, None, ANCORA)
+        for learner, referencias in CORE_REFERENCES.items():
+            for setting, valor in referencias:
+                assert not [
+                    a for a in arms if a[2] == setting and a[3] == valor
+                ], (grupo, learner, setting)
+
+
+def test_the_reference_arm_sits_on_the_curve_of_its_factor(base):
+    """The manifest groups it with the values it is there to be read against."""
+    arms = plan(base, ['dynq', 'qstatic'], 'core', None, ANCORA)
+    manifesto = manifest(arms, 'core', ANCORA, True)
+    assert manifesto[arm_name('dynq', 'alfa', 0.7863156043331933)]['factor'] \
+        == 'alfa'
+    assert manifesto[arm_name('qstatic', 'beta', 0.05)]['factor'] == 'beta'
+
+
+def test_no_anchor_file_means_the_published_configuration(base):
+    assert load_anchor(None) == {}
+    assert baseline_settings(base, 'dynq', {}) \
+        == baseline_settings(base, 'dynq')
+
+
+# --------------------------------------------------------- the disturbances
+
+def test_every_arm_of_a_disturbed_sweep_carries_the_same_disturbances(base):
+    """Including the baseline, or the pairing compares two scenarios."""
+    arms = plan(base, ['dynq', 'qstatic'], 'core', None, ANCORA)
+    for arm in arms:
+        regular = build_config(
+            base, arm, 50, 10, 10, 15000, ANCORA, True
+        )['settings']['regular']
+        assert regular['disturbances'] == DISTURBANCES, arm[0]
+
+
+def test_an_undisturbed_sweep_declares_no_disturbance(base, arms_ancorados):
+    for arm in arms_ancorados:
+        regular = build_config(
+            base, arm, 50, 10, 10, 15000, ANCORA, False
+        )['settings']['regular']
+        assert regular['disturbances'] == []
+
+
+def test_the_manifest_records_the_scenario_and_the_anchor(base):
+    arms = plan(base, ['dynq'], 'core', None, ANCORA)
+    manifesto = manifest(arms, 'core', ANCORA, True)
+    for label, info in manifesto.items():
+        assert info['disturbed'] is True, label
+        assert info['anchor'] == ANCORA['dynq'], label
+    limpo = manifest(arms, 'core', None, False)
+    for label, info in limpo.items():
+        assert info['disturbed'] is False
+        assert info['anchor'] == {}

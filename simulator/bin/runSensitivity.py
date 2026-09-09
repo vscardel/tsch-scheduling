@@ -76,6 +76,24 @@ CORE_GRIDS = [
     #                                 disturbances
 ]
 
+# The published values that fall outside the literature box, run anyway as
+# one extra arm each so the curve of their own factor shows what the box
+# costs. They are references, not candidates: the configuration the revised
+# paper adopts stays inside the box even if one of these wins, and if one wins
+# the report says by how much.
+#
+#   DynQ's alpha of 0.786 is 2.6 times the ceiling of the box. The probe of
+#   2026-09-09 already measured it as a tie with 0.1 on the score, with and
+#   without disturbances, and worse on 6P overhead.
+#   Q-static's beta of 0.05 is below the floor of 0.40, which makes the agent
+#   nearly myopic. Nothing has measured it against a box value yet, so its
+#   own sweep does that here.
+CORE_REFERENCES = {
+    'dynq'   : [('ALFA', 0.7863156043331933),
+                ('MIN_EPSLON', 0.19096869607843248)],
+    'qstatic': [('BETA', 0.05)],
+}
+
 # Left at its published value in the core sweep. It governs how quickly
 # epsilon reaches its floor rather than where the floor is, the published
 # 0.0151 is already inside the range, and spending five arms per learner on it
@@ -153,8 +171,41 @@ def load_parameters(nome):
         return json.load(f)
 
 
-def baseline_settings(base, learner):
-    """The published configuration of one learner, as its arms depart from it."""
+def load_anchor(path):
+    """Per learner, the settings the arms of this sweep depart from.
+
+    A coordinate sweep measures sensitivity around one point, so the point has
+    to be the one being defended. Two reasons it is no longer the published
+    configuration. The published alpha of the dynamic learner, 0.786, sits
+    outside the range the 6TiSCH literature uses, and the probe of 2026-09-09
+    measured it as a tie with 0.1 both with disturbances and without, so the
+    citable value costs nothing on the score. And the sweep of the task
+    parameters runs after this one, anchored on whatever this one chooses.
+
+    The file is read as {learner: {SETTING: value}} and applied last, so it
+    wins over the published parameters.
+    """
+    if not path:
+        return {}
+    with open(path) as f:
+        return json.load(f)
+
+
+# The two disturbances of the probe, in the positions it validated: 40% of the
+# run for the agent to settle before the first, and 30% after the last to
+# measure the recovery. Both together cost about 0.077 of score on the
+# published DynQ, ten runs out of ten.
+DISTURBANCES = [
+    {'asn_fraction': 0.40, 'kind': 'traffic', 'factor': 0.5},
+    {'asn_fraction': 0.70, 'kind': 'link_quality', 'share': 0.2, 'pdr': 0.4},
+]
+
+
+def baseline_settings(base, learner, anchor=None):
+    """The configuration of one learner, as its arms depart from it.
+
+    The published parameters, unless an anchor overrides some of them.
+    """
     regular = json.loads(json.dumps(base))['settings']['regular']
     spec = LEARNERS[learner]
     regular.update(load_parameters(spec['parameters']))
@@ -162,6 +213,7 @@ def baseline_settings(base, learner):
     if spec['sf_class'] == 'Qlearning':
         regular['factorial_combinations'] = FACTORS_STATE
         regular['STATE_SIZE'] = 2 ** len(FACTORS_STATE)
+    regular.update((anchor or {}).get(learner, {}))
     return regular
 
 
@@ -171,7 +223,7 @@ def arm_name(learner, factor, valor):
     return '{0}_{1}_{2}'.format(learner, factor, texto)
 
 
-def plan(base, learners, grupo='core', factors=None):
+def plan(base, learners, grupo='core', factors=None, anchor=None):
     """Every arm to run: one baseline per learner, then one per swept value.
 
     A value equal to the published one is not run again under another name. It
@@ -181,15 +233,22 @@ def plan(base, learners, grupo='core', factors=None):
     """
     arms = []
     for learner in learners:
-        regular = baseline_settings(base, learner)
+        regular = baseline_settings(base, learner, anchor)
         arms.append(('{0}_base'.format(learner), learner, None, None))
         escolhidos = [
             f for f in factors_of(learner, grupo)
             if not factors or f[0] in factors
         ]
+        rotulo = dict((f[1], f[0]) for f in escolhidos)
+        referencias = [
+            (rotulo[setting], setting, valor)
+            for setting, valor in CORE_REFERENCES.get(learner, [])
+            if grupo == 'core' and setting in rotulo
+        ]
         for factor, setting, valores in escolhidos:
             publicado = regular.get(setting, 0)
-            for valor in valores:
+            extras = [v for f, s_, v in referencias if s_ == setting]
+            for valor in list(valores) + extras:
                 if valor == publicado:
                     continue
                 arms.append(
@@ -205,13 +264,15 @@ def plan(base, learners, grupo='core', factors=None):
     return arms
 
 
-def build_config(base, arm, num_motes, num_runs, num_cpus, slotframes):
+def build_config(base, arm, num_motes, num_runs, num_cpus, slotframes,
+                 anchor=None, disturbed=False):
     label, learner, setting, valor = arm
     settings = json.loads(json.dumps(base))
-    regular = baseline_settings(base, learner)
+    regular = baseline_settings(base, learner, anchor)
     if setting is not None:
         regular[setting] = valor
     regular['exec_numSlotframesPerRun'] = slotframes
+    regular['disturbances'] = DISTURBANCES if disturbed else []
     settings['settings']['regular'] = regular
     settings['settings']['combination']['exec_numMotes'] = [num_motes]
     settings['execution'] = {'numRuns': num_runs, 'numCPUs': num_cpus}
@@ -219,21 +280,30 @@ def build_config(base, arm, num_motes, num_runs, num_cpus, slotframes):
     return settings
 
 
-def manifest(arms, grupo='core'):
-    """What each arm changed, so the report can group the sweeps by factor."""
+def manifest(arms, grupo='core', anchor=None, disturbed=False):
+    """What each arm changed, so the report can group the sweeps by factor.
+
+    The anchor and the disturbances go on every entry rather than in a key of
+    their own, because the report walks the entries and an entry that is not
+    an arm would have no factor to group by.
+    """
     saida = {}
+    comum = {'group': grupo, 'disturbed': bool(disturbed)}
     for label, learner, setting, valor in arms:
+        entrada = dict(comum)
+        entrada['anchor'] = (anchor or {}).get(learner, {})
+        entrada['learner'] = learner
         if setting is None:
-            saida[label] = {'learner': learner, 'factor': 'baseline',
-                            'group': grupo, 'setting': None, 'value': None,
-                            'baseline': label}
+            entrada.update({'factor': 'baseline', 'setting': None,
+                            'value': None, 'baseline': label})
+            saida[label] = entrada
             continue
         factor = [
             f[0] for f in factors_of(learner, grupo) if f[1] == setting
         ][0]
-        saida[label] = {'learner': learner, 'factor': factor, 'group': grupo,
-                        'setting': setting, 'value': valor,
-                        'baseline': '{0}_base'.format(learner)}
+        entrada.update({'factor': factor, 'setting': setting, 'value': valor,
+                        'baseline': '{0}_base'.format(learner)})
+        saida[label] = entrada
     return saida
 
 
@@ -249,6 +319,11 @@ def main():
                         help='which set of factors to sweep')
     parser.add_argument('--factors', help='comma separated labels, default all')
     parser.add_argument('--arms', help='comma separated arm names to run')
+    parser.add_argument('--anchor',
+                        help='JSON of {learner: {SETTING: value}}, the point '
+                             'the arms depart from, default the published one')
+    parser.add_argument('--disturbances', action='store_true',
+                        help='run every arm in the disturbed scenario')
     parser.add_argument('--dry-run', action='store_true',
                         help='write the configs and the manifest, run nothing')
     args = parser.parse_args()
@@ -258,26 +333,35 @@ def main():
     )
     with open('config.json') as f:
         base = json.load(f)
+    anchor = load_anchor(args.anchor)
 
-    arms = plan(base, args.learners, args.group, pedidos)
+    arms = plan(base, args.learners, args.group, pedidos, anchor)
     if args.arms:
         querido = [a.strip() for a in args.arms.split(',')]
         arms = [a for a in arms if a[0] in querido]
 
     with open('sensitivity_manifest.json', 'w') as f:
-        json.dump(manifest(arms, args.group), f, indent=2)
+        json.dump(
+            manifest(arms, args.group, anchor, args.disturbances), f, indent=2
+        )
     print('{0} bracos, manifesto em sensitivity_manifest.json'.format(len(arms)))
+    for learner in sorted(anchor):
+        print('  ancora {0}: {1}'.format(learner, anchor[learner]))
+    print('  perturbacoes: {0}'.format(
+        len(DISTURBANCES) if args.disturbances else 0))
 
     for arm in arms:
         settings = build_config(
-            base, arm, args.motes, args.runs, args.cpus, args.slotframes
+            base, arm, args.motes, args.runs, args.cpus, args.slotframes,
+            anchor, args.disturbances
         )
         nome = settings['log_directory_name']
         config_name = 'config_{0}.json'.format(nome)
         with open(config_name, 'w') as f:
             json.dump(settings, f, indent=4)
         if args.dry_run:
-            mudou = '{0}={1}'.format(arm[2], arm[3]) if arm[2] else 'publicado'
+            mudou = ('{0}={1}'.format(arm[2], arm[3]) if arm[2]
+                     else ('ancora' if anchor else 'publicado'))
             print('  {0:28s} {1}'.format(nome, mudou))
             continue
 

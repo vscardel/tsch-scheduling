@@ -1,0 +1,9 @@
+{
+    "dynq": {
+        "ALFA": 0.1,
+        "MIN_EPSLON": 0.1
+    },
+    "qstatic": {
+        "BETA": 0.95
+    }
+}
