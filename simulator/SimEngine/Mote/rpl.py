@@ -667,8 +667,26 @@ class RplOF0(RplOFBase):
 
         if neighbor[u'numTx'] >= self.ETX_NUM_TX_CUTOFF:
             # update ETX
-            assert neighbor[u'numTxAck'] > 0
-            neighbor[u'etx'] = float(neighbor[u'numTx']) / neighbor[u'numTxAck']
+            if neighbor[u'numTxAck'] == 0:
+                # A hundred attempts and not one acknowledgement, which the
+                # ratio below cannot express and an assertion here used to
+                # end the run over. It is reachable: the branch underneath
+                # marks the link unacceptable at ten consecutive failures but
+                # leaves numTx running, so a mote with no better parent to
+                # move to keeps transmitting on the same cell until it
+                # reaches the cutoff. Degrading the links of a live network
+                # is what makes that happen, so it surfaced the first time a
+                # run was disturbed on purpose.
+                #
+                # The link gets the same unacceptable ETX that branch
+                # assigns, which is the honest reading of the measurement,
+                # and the counters restart so the next hundred attempts are
+                # judged on their own.
+                neighbor[u'etx'] = self.UPPER_LIMIT_OF_ACCEPTABLE_ETX + 1
+            else:
+                neighbor[u'etx'] = (
+                    float(neighbor[u'numTx']) / neighbor[u'numTxAck']
+                )
             # reset counters
             neighbor[u'numTx'] = 0
             neighbor[u'numTxAck'] = 0
