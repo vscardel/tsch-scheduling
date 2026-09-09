@@ -45,6 +45,11 @@ import collections
 import json
 import os
 import random
+import sys
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+
+from SimEngine import network_trace
 
 
 # ------------------------------------------------------------------ reading
@@ -513,15 +518,107 @@ def imprimir_veredito(v, bins):
     elif c['settled']:
         print('    (c) politica assentou:    sim   a partir de %.0f%% da rodada'
               % (100.0 * c['from_fraction']))
+    elif (c['final_share'] or 0) >= SETTLED_SHARE:
+        # reached the mark but not early enough to have held for the final
+        # third, which is the stretch the other two parts are read over
+        print('    (c) politica assentou:    NAO  chegou a %.1f%% das linhas, '
+              'mas tarde demais para ter durado o terco final'
+              % (100.0 * c['final_share']))
     else:
         print('    (c) politica assentou:    NAO  chegou a %.1f%% das linhas'
               % (100.0 * (c['final_share'] or 0)))
     print('    veredito: %s' % ('CONVERGIU' if v['converged'] else 'nao convergiu'))
 
 
+
+# ---------------------------------------------------- tracking a disturbance
+
+"""What the agent did when the network changed under it.
+
+In a non-stationary environment the question is not whether the table settled
+but whether the agent recovers, so these read the network time series the
+engine now writes and report, per disturbance, how far delivery fell and how
+long it took to come back.
+
+Both are comparative. A disturbance that permanently changes what the network
+can deliver moves the achievable ratio, and then no agent returns to the old
+level however well it adapts, so a recovery time means something only against
+another arm on the same disturbance and the same seeds.
+"""
+
+
+def load_network_traces(folder):
+    """The per-run network time series, keyed the way the runs are."""
+    saida = {}
+    for raiz, _, arquivos in os.walk(folder):
+        if 'network_trace.json' not in arquivos:
+            continue
+        caminho = os.path.join(raiz, 'network_trace.json')
+        try:
+            with open(caminho) as f:
+                saida[run_id_of(caminho)] = json.load(f)
+        except ValueError:
+            print('ilegivel, ignorado: {0}'.format(caminho))
+    return saida
+
+
+def tracking(traces, fractions):
+    """Per disturbance, the fall and the return, over the runs.
+
+    The run length comes from the trace itself rather than from a config, so
+    the report needs to be told only where the disturbances were.
+    """
+    saida = []
+    for fracao in fractions:
+        quedas, voltas, nunca = [], [], 0
+        for trace in traces.values():
+            if not trace.get('asn'):
+                continue
+            fim = max(trace['asn'])
+            asn = int(fim * fracao)
+            serie = network_trace.delivery_series(trace)
+            queda = network_trace.drop(serie, asn)
+            volta = network_trace.recovery(serie, asn)
+            if queda is not None:
+                quedas.append(queda)
+            if volta is None:
+                nunca += 1
+            else:
+                voltas.append(volta)
+        saida.append({
+            'fraction'      : fracao,
+            'runs'          : len(traces),
+            'drop'          : media_de(quedas),
+            'recovery_asn'  : media_de(voltas),
+            'recovered'     : len(voltas),
+            'never_recovered': nunca,
+        })
+    return saida
+
+
+def imprimir_rastreamento(linhas, slotframe_length=101):
+    if not linhas:
+        return
+    print('  rastreamento das perturbacoes:')
+    for linha in linhas:
+        volta = linha['recovery_asn']
+        print('    em %.0f%% da rodada: queda %s, voltou em %d de %d rodadas'
+              % (
+                  100 * linha['fraction'],
+                  '%.1f%%' % (100 * linha['drop'])
+                  if linha['drop'] is not None else 'sem dados',
+                  linha['recovered'], linha['runs'],
+              ))
+        if volta is not None:
+            print('       tempo medio de volta: %.0f slotframes'
+                  % (volta / float(slotframe_length)))
+        if linha['never_recovered']:
+            print('       nao voltou em %d rodadas' % linha['never_recovered'])
+
+
 # ------------------------------------------------------------------ report
 
-def summarise(nome, runs, bins):
+def summarise(nome, runs, bins, fractions=(), traces=None):
     span = span_of(runs)
     series = dict(
         (run, run_series(motes, span, bins))
@@ -552,6 +649,7 @@ def summarise(nome, runs, bins):
         'converged_at_bin' : parada,
         'greedy_share'     : greedy_share(runs),
         'verdict'          : verdict(runs, bins),
+        'tracking'         : tracking(traces or {}, fractions),
     }
     imprimir(nome, resumo, bins)
     return resumo
@@ -624,6 +722,7 @@ def imprimir(nome, r, bins):
     print('  decisoes escolhidas pela tabela: %.1f%%' % (
         100.0 * r['greedy_share']))
     imprimir_veredito(r['verdict'], bins)
+    imprimir_rastreamento(r.get('tracking') or [])
 
 
 CAVEAT = """
@@ -638,7 +737,7 @@ controle aleatorio.
 
 # ------------------------------------------------------------------- plots
 
-def plot(destino, curvas_por_nome, bins):
+def plot(destino, curvas_por_nome, bins, fractions=()):
     """The figure reviewer 3 asked for: averaged over runs, with a band."""
     try:
         import matplotlib
@@ -673,6 +772,8 @@ def plot(destino, curvas_por_nome, bins):
             ax.plot(xs, [p[1] for p in pares], label=nome)
             ax.fill_between(xs, [p[2] for p in pares], [p[3] for p in pares],
                             alpha=0.2)
+        for fracao in fractions:
+            ax.axvline(fracao, color='0.4', linestyle=':', linewidth=1)
         ax.set_xlabel('fracao da rodada (eixo de ASN)')
         ax.set_ylabel(titulo)
         ax.legend(fontsize='small')
@@ -693,6 +794,10 @@ def main():
                         help='the matching random-policy arms')
     parser.add_argument('--bins', type=int, default=40,
                         help='windows the ASN axis is divided into')
+    parser.add_argument('--disturbances', type=float, nargs='*', default=[],
+                        help='where the disturbances were, as fractions of '
+                             'the run; the report is told rather than reading '
+                             'a config')
     parser.add_argument('--plot', default=None, help='where to write figures')
     parser.add_argument('--out', default=None, help='write the report as JSON')
     args = parser.parse_args()
@@ -704,7 +809,9 @@ def main():
         if not runs:
             print('sem qlearning_stats.json em {0}'.format(folder))
             continue
-        resumos[nome] = summarise(nome, runs, args.bins)
+        resumos[nome] = summarise(
+            nome, runs, args.bins, args.disturbances, load_network_traces(folder)
+        )
 
     if not resumos:
         raise SystemExit('nada para relatar')
@@ -712,7 +819,7 @@ def main():
     print(CAVEAT)
 
     if args.plot:
-        plot(args.plot, resumos, args.bins)
+        plot(args.plot, resumos, args.bins, args.disturbances)
 
     if args.out:
         with open(args.out, 'w') as f:

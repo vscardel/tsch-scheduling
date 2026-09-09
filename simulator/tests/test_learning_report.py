@@ -177,3 +177,75 @@ def test_a_stretch_no_run_reached_is_not_a_measurement_of_zero():
     of zero where there is no measurement at all."""
     assert lr.media_de([None, None]) is None
     assert lr.media_de([None, 2.0, 4.0]) == 3.0
+
+
+# --------------------------------------------- tracking a disturbance
+
+def trace_json(pares, every=10, slotframe=101):
+    import json
+    t = {'asn': [], 'sent': [], 'received': [], 'every': every}
+    for i, (enviados, recebidos) in enumerate(pares):
+        t['asn'].append(i * slotframe * every)
+        t['sent'].append(enviados)
+        t['received'].append(recebidos)
+    return json.dumps(t)
+
+
+def escrever_traces(tmpdir, pares, runs=3):
+    for run in range(runs):
+        destino = tmpdir.join('exec_numMotes_4', 'run_%d' % run)
+        destino.ensure(dir=True)
+        destino.join('network_trace.json').write(trace_json(pares))
+
+
+def test_the_traces_are_read_per_run(tmpdir):
+    escrever_traces(tmpdir, [(100 * i, 80 * i) for i in range(20)])
+    traces = lr.load_network_traces(str(tmpdir))
+    assert sorted(traces) == ['run_0', 'run_1', 'run_2']
+
+
+def test_a_disturbance_that_did_not_bite_reads_as_no_fall(tmpdir):
+    """Steady delivery all the way through: the disturbance never reached
+    this configuration, which is a result and not a recovery."""
+    escrever_traces(tmpdir, [(100 * i, 80 * i) for i in range(20)])
+    linhas = lr.tracking(lr.load_network_traces(str(tmpdir)), [0.5])
+    assert linhas[0]['drop'] == 0.0
+    assert linhas[0]['runs'] == 3
+
+
+def test_a_fall_and_a_return_are_both_reported(tmpdir):
+    antes = [(100 * i, 80 * i) for i in range(1, 12)]      # 80%
+    caido = [(1200, 920)]                                   # 40%
+    volta = [(1200 + 100 * i, 920 + 80 * i) for i in range(1, 6)]
+    escrever_traces(tmpdir, [(0, 0)] + antes + caido + volta)
+
+    traces = lr.load_network_traces(str(tmpdir))
+    fim = max(list(traces.values())[0]['asn'])
+    fracao = (12 * 101 * 10) / float(fim)
+    linhas = lr.tracking(traces, [fracao])
+    assert linhas[0]['drop'] > 0.4
+    assert linhas[0]['recovered'] == 3
+    assert linhas[0]['never_recovered'] == 0
+
+
+def test_an_arm_that_never_comes_back_is_counted(tmpdir):
+    antes = [(100 * i, 80 * i) for i in range(1, 12)]
+    depois = [(1100 + 100 * i, 880 + 20 * i) for i in range(1, 8)]
+    escrever_traces(tmpdir, [(0, 0)] + antes + depois)
+
+    traces = lr.load_network_traces(str(tmpdir))
+    fim = max(list(traces.values())[0]['asn'])
+    fracao = (12 * 101 * 10) / float(fim)
+    linhas = lr.tracking(traces, [fracao])
+    assert linhas[0]['never_recovered'] == 3
+    assert linhas[0]['recovery_asn'] is None
+
+
+def test_no_traces_means_no_tracking_rather_than_a_crash(tmpdir):
+    """Runs made before the trace existed, and every unperturbed arm."""
+    assert lr.tracking({}, [0.4, 0.7]) == [
+        {'fraction': 0.4, 'runs': 0, 'drop': None, 'recovery_asn': None,
+         'recovered': 0, 'never_recovered': 0},
+        {'fraction': 0.7, 'runs': 0, 'drop': None, 'recovery_asn': None,
+         'recovered': 0, 'never_recovered': 0},
+    ]
