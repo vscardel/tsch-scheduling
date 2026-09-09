@@ -249,3 +249,31 @@ def test_no_traces_means_no_tracking_rather_than_a_crash(tmpdir):
         {'fraction': 0.7, 'runs': 0, 'drop': None, 'recovery_asn': None,
          'recovered': 0, 'never_recovered': 0},
     ]
+
+
+# ------------------------------------------- naming an arm from its path
+
+def test_an_arm_is_named_by_its_own_folder_and_not_by_the_mote_count():
+    """simData/<arm>/exec_numMotes_50 is named for the arm.
+
+    The summaries are kept in a dict keyed by this name, so taking the last
+    component of the path made a report over several arms keep only the last.
+    """
+    from learning_report import arm_label
+    assert arm_label('simData/dynq_alfa0p1_pert/exec_numMotes_50') \
+        == 'dynq_alfa0p1_pert'
+    assert arm_label('simData/dynq_alfa0p1_pert/exec_numMotes_50/') \
+        == 'dynq_alfa0p1_pert'
+    assert arm_label('/dados/resultados/qstatic_base_n50') \
+        == 'qstatic_base_n50'
+
+
+def test_every_arm_of_a_report_keeps_its_own_summary():
+    from learning_report import arm_label
+    pastas = [
+        'simData/dynq_publicado_pert/exec_numMotes_50',
+        'simData/dynq_alfa0p1_pert/exec_numMotes_50',
+        'simData/qstatic_publicado_pert/exec_numMotes_50',
+        'simData/qstatic_limiar0p9_pert/exec_numMotes_50',
+    ]
+    assert len(set(arm_label(p) for p in pastas)) == len(pastas)

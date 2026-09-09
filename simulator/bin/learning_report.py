@@ -547,6 +547,24 @@ another arm on the same disturbance and the same seeds.
 """
 
 
+def arm_label(folder):
+    """The arm's name, from a path that may end at the mote count.
+
+    A folder is named either for the arm or for the size of the run, since
+    the simulator writes simData/<arm>/exec_numMotes_<n>. Taking the last
+    component of the path would call every arm exec_numMotes_50, which reads
+    badly and, because the summaries are kept in a dict keyed by this name,
+    silently kept only the last arm of a report over several.
+    """
+    caminho = os.path.normpath(folder)
+    nome = os.path.basename(caminho)
+    if nome.startswith('exec_numMotes'):
+        pai = os.path.basename(os.path.dirname(caminho))
+        if pai:
+            return pai
+    return nome
+
+
 def load_network_traces(folder):
     """The per-run network time series, keyed the way the runs are."""
     saida = {}
@@ -805,7 +823,7 @@ def main():
     resumos = {}
     for folder in list(args.inputfolder) + list(args.control):
         runs = load_runs(folder)
-        nome = os.path.basename(os.path.normpath(folder))
+        nome = arm_label(folder)
         if not runs:
             print('sem qlearning_stats.json em {0}'.format(folder))
             continue
