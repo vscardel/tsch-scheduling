@@ -33,6 +33,8 @@ import argparse
 import json
 import os
 
+from runExperiments import search_space
+
 
 FACTORS_STATE = ['traffic', 'queue', 'charge']
 
@@ -42,11 +44,71 @@ FACTORS_STATE = ['traffic', 'queue', 'charge']
 # nothing at all.
 DECAY_GRID = [1, 3, 10]
 
+# Three sets of factors, and which one is swept is a command line choice.
+#
+#   core     the Q-learning parameters, over the ranges runExperiments defines
+#            from the literature. These are chosen first, because the task
+#            parameters are only meaningful around a given operating point.
+#   tarefa   what the agent is being asked to do: the reward weights, the
+#            moving average window, the charge threshold. Swept afterwards,
+#            around the core values that won.
+#   legado   the factors of the sweep of 2026-09-08, kept so that run can be
+#            reproduced. It answered R1.6 and R1.7 for the configuration the
+#            reviewers read.
+#
+# Every core grid point means something, rather than being an even division
+# of the range. A reviewer reading "alpha in {0.01, 0.1, 0.3}" sees the two
+# values the neighbouring 6TiSCH papers use and the ceiling of the range;
+# reading "0.0825, 0.155, 0.2275" sees arithmetic. Three points per factor
+# also keeps the sweep inside its time budget, and each one is either cited or
+# an endpoint of the range the ranges test pins.
+CORE_GRIDS = [
+    #  label             setting              points, and what each one is
+    ('alfa',    'ALFA',              [0.01, 0.1, 0.3]),
+    #                                 Access 2024, ICEIEC 2022, ceiling
+    ('beta',    'BETA',              [0.4, 0.7, 0.95]),
+    #                                 floor, middle, both neighbours
+    ('epsilon', 'MIN_EPSLON',        [0.01, 0.1, 0.15]),
+    #                                 floor, both neighbours, ceiling
+    ('limiar',  'EPSLON_THRESHOLD',  [0.3, 0.6, 0.9]),
+    #                                 published, and the two the sweep of
+    #                                 2026-09-08 found better without
+    #                                 disturbances
+]
+
+# Left at its published value in the core sweep. It governs how quickly
+# epsilon reaches its floor rather than where the floor is, the published
+# 0.0151 is already inside the range, and spending five arms per learner on it
+# would cost more than the question is worth right now.
+CORE_LEFT_ALONE = ['EPSLON_DECAY_RATE']
+
+
+def core_factors(sf_class):
+    """One factor per core parameter the learner actually has.
+
+    The learner's own search space decides which: DynQ has no phase threshold
+    to cross, so sweeping one there would produce a row that means nothing.
+    """
+    tem = set(nome for nome, _ in search_space(sf_class))
+    return [
+        (label, setting, pontos)
+        for label, setting, pontos in CORE_GRIDS
+        if setting in tem
+    ]
+
+
 LEARNERS = {
     'dynq': {
         'sf_class'  : 'Qlearning',
         'parameters': 'traffic_queue_charge',
-        'factors'   : [
+        'tarefa'    : [
+            ('w_energy',      'W_ENERGY',                [0.0, 0.01, 0.5, 2.0]),
+            ('w_latency',     'W_LATENCY',               [0.0, 0.5, 2.0, 5.0]),
+            ('w_throughput',  'W_THROUGHPUT',            [0.0, 0.5, 2.0, 5.0]),
+            ('w_utilization', 'W_UTILIZATION',           [0.0, 0.5, 2.0, 5.0]),
+            ('janela',        'SLOTFRAME_INTERVAL_SIZE', [1, 3, 20, 50]),
+        ],
+        'legado'    : [
             ('w_energy', 'W_ENERGY',                [0.0, 0.01, 0.1, 5.0]),
             ('janela',   'SLOTFRAME_INTERVAL_SIZE', [1, 3, 20, 50]),
             ('alfa',     'ALFA',                    [0.05, 0.2, 0.5, 0.95]),
@@ -58,7 +120,13 @@ LEARNERS = {
     'qstatic': {
         'sf_class'  : 'QlearningSBRC24',
         'parameters': 'qlearningSBRC24',
-        'factors'   : [
+        # the window does nothing here: the discretisation reads the raw
+        # value against a fixed threshold, which is what makes it the static
+        # learner, so its only task parameter is the charge threshold
+        'tarefa'    : [
+            ('tau_charge', 'QSTATIC_TAU_CHARGE', [0.2, 0.35, 0.65, 0.8]),
+        ],
+        'legado'    : [
             ('janela',   'SLOTFRAME_INTERVAL_SIZE', [1, 3, 20, 50]),
             ('alfa',     'ALFA',                    [0.01, 0.2, 0.5, 0.9]),
             ('beta',     'BETA',                    [0.0, 0.3, 0.6, 0.9]),
@@ -67,6 +135,17 @@ LEARNERS = {
         ],
     },
 }
+
+
+def factors_of(learner, grupo):
+    """The factor table for one learner and one group.
+
+    The core group is derived from the ranges rather than written out, so the
+    grid and the ranges cannot drift apart.
+    """
+    if grupo == 'core':
+        return core_factors(LEARNERS[learner]['sf_class'])
+    return LEARNERS[learner][grupo]
 
 
 def load_parameters(nome):
@@ -92,7 +171,7 @@ def arm_name(learner, factor, valor):
     return '{0}_{1}_{2}'.format(learner, factor, texto)
 
 
-def plan(base, learners, factors=None):
+def plan(base, learners, grupo='core', factors=None):
     """Every arm to run: one baseline per learner, then one per swept value.
 
     A value equal to the published one is not run again under another name. It
@@ -105,7 +184,7 @@ def plan(base, learners, factors=None):
         regular = baseline_settings(base, learner)
         arms.append(('{0}_base'.format(learner), learner, None, None))
         escolhidos = [
-            f for f in LEARNERS[learner]['factors']
+            f for f in factors_of(learner, grupo)
             if not factors or f[0] in factors
         ]
         for factor, setting, valores in escolhidos:
@@ -118,8 +197,8 @@ def plan(base, learners, factors=None):
                 )
     if factors:
         conhecidos = set()
-        for spec in LEARNERS.values():
-            conhecidos.update(f[0] for f in spec['factors'])
+        for nome in LEARNERS:
+            conhecidos.update(f[0] for f in factors_of(nome, grupo))
         faltando = set(factors) - conhecidos
         if faltando:
             raise ValueError('no such factor: {0}'.format(', '.join(faltando)))
@@ -140,19 +219,19 @@ def build_config(base, arm, num_motes, num_runs, num_cpus, slotframes):
     return settings
 
 
-def manifest(arms):
+def manifest(arms, grupo='core'):
     """What each arm changed, so the report can group the sweeps by factor."""
     saida = {}
     for label, learner, setting, valor in arms:
         if setting is None:
             saida[label] = {'learner': learner, 'factor': 'baseline',
-                            'setting': None, 'value': None,
+                            'group': grupo, 'setting': None, 'value': None,
                             'baseline': label}
             continue
         factor = [
-            f[0] for f in LEARNERS[learner]['factors'] if f[1] == setting
+            f[0] for f in factors_of(learner, grupo) if f[1] == setting
         ][0]
-        saida[label] = {'learner': learner, 'factor': factor,
+        saida[label] = {'learner': learner, 'factor': factor, 'group': grupo,
                         'setting': setting, 'value': valor,
                         'baseline': '{0}_base'.format(learner)}
     return saida
@@ -165,6 +244,9 @@ def main():
     parser.add_argument('--cpus', type=int, default=10)
     parser.add_argument('--slotframes', type=int, default=3750)
     parser.add_argument('--learners', nargs='+', default=['dynq', 'qstatic'])
+    parser.add_argument('--group', default='core',
+                        choices=['core', 'tarefa', 'legado'],
+                        help='which set of factors to sweep')
     parser.add_argument('--factors', help='comma separated labels, default all')
     parser.add_argument('--arms', help='comma separated arm names to run')
     parser.add_argument('--dry-run', action='store_true',
@@ -177,13 +259,13 @@ def main():
     with open('config.json') as f:
         base = json.load(f)
 
-    arms = plan(base, args.learners, pedidos)
+    arms = plan(base, args.learners, args.group, pedidos)
     if args.arms:
         querido = [a.strip() for a in args.arms.split(',')]
         arms = [a for a in arms if a[0] in querido]
 
     with open('sensitivity_manifest.json', 'w') as f:
-        json.dump(manifest(arms), f, indent=2)
+        json.dump(manifest(arms, args.group), f, indent=2)
     print('{0} bracos, manifesto em sensitivity_manifest.json'.format(len(arms)))
 
     for arm in arms:
