@@ -60,7 +60,8 @@
             "MAX_SLOTFRAMES_BETWEEN_DECISIONS": 50, 
             "LAMBDA": 2, 
             "LEARNED_POLICY": true, 
-            "ALFA_DECAY_TAU": 0
+            "ALFA_DECAY_TAU": 0, 
+            "disturbances": []
         }, 
         "combination": {
             "exec_numMotes": [

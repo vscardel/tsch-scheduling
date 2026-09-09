@@ -23,6 +23,7 @@ import json
 import os
 import errno
 
+from . import disturbances
 from . import Mote
 from . import SimSettings
 from . import SimLog
@@ -505,6 +506,12 @@ class SimEngine(DiscreteEventEngine):
             uniqueTag        = (u'SimEngine', u'_actionEndSlotframe'),
             intraSlotOrder   = Mote.MoteDefines.INTRASLOTORDER_ADMINTASKS,
         )
+
+        # changes to the environment part way through the run, if any were
+        # asked for. Here because this is where the run length is known and
+        # where the calendar is first laid out; with none declared it puts
+        # nothing on the calendar and the run is unchanged.
+        self.disturbance_schedule = disturbances.schedule(self)
 
     def _routine_thread_crashed(self):
         # log
