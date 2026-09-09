@@ -364,3 +364,50 @@ def test_the_manifest_records_the_scenario_and_the_anchor(base):
     for label, info in limpo.items():
         assert info['disturbed'] is False
         assert info['anchor'] == {}
+
+
+def test_a_filtered_run_does_not_rewrite_the_manifest(monkeypatch):
+    """One arm per container is how the sweep is run.
+
+    runSensitivity is invoked once per arm, so if it wrote the manifest on
+    each invocation the file would end up describing the last arm alone, and
+    the report would print a sweep of one without saying anything was
+    missing. The beta pass of 2026-09-09 lost three of its four rows that
+    way.
+    """
+    import sys
+    import runSensitivity
+
+    marcador = {'the whole plan': True}
+    with open('sensitivity_manifest.json', 'w') as f:
+        json.dump(marcador, f)
+
+    monkeypatch.setattr(
+        sys, 'argv',
+        ['runSensitivity.py', '--group', 'core', '--learners', 'qstatic',
+         '--factors', 'beta', '--arms', 'qstatic_beta_0p95', '--dry-run']
+    )
+    runSensitivity.main()
+
+    with open('sensitivity_manifest.json') as f:
+        assert json.load(f) == marcador, 'a filtered run wrote the manifest'
+
+
+def test_an_unfiltered_run_still_writes_the_manifest(monkeypatch):
+    import sys
+    import runSensitivity
+
+    with open('sensitivity_manifest.json', 'w') as f:
+        json.dump({'the whole plan': True}, f)
+
+    monkeypatch.setattr(
+        sys, 'argv',
+        ['runSensitivity.py', '--group', 'core', '--learners', 'qstatic',
+         '--factors', 'beta', '--dry-run']
+    )
+    runSensitivity.main()
+
+    with open('sensitivity_manifest.json') as f:
+        escrito = json.load(f)
+    assert 'qstatic_base' in escrito
+    assert len(escrito) == 4

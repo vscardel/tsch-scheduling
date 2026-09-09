@@ -340,11 +340,23 @@ def main():
         querido = [a.strip() for a in args.arms.split(',')]
         arms = [a for a in arms if a[0] in querido]
 
-    with open('sensitivity_manifest.json', 'w') as f:
-        json.dump(
-            manifest(arms, args.group, anchor, args.disturbances), f, indent=2
+    if args.arms:
+        # The supervisor runs one arm per container, so writing the manifest
+        # here would leave the last arm's name as the whole manifest, and the
+        # report would silently describe a sweep of one. The manifest of the
+        # full plan is written by the dry run that precedes the sweep.
+        print('{0} bracos pedidos, manifesto preservado'.format(len(arms)))
+    else:
+        with open('sensitivity_manifest.json', 'w') as f:
+            json.dump(
+                manifest(arms, args.group, anchor, args.disturbances),
+                f, indent=2
+            )
+        print(
+            '{0} bracos, manifesto em sensitivity_manifest.json'.format(
+                len(arms)
+            )
         )
-    print('{0} bracos, manifesto em sensitivity_manifest.json'.format(len(arms)))
     for learner in sorted(anchor):
         print('  ancora {0}: {1}'.format(learner, anchor[learner]))
     print('  perturbacoes: {0}'.format(
