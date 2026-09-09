@@ -25,6 +25,7 @@ import errno
 
 from . import disturbances
 from . import Mote
+from . import network_trace
 from . import SimSettings
 from . import SimLog
 from . import Connectivity
@@ -76,6 +77,12 @@ class DiscreteEventEngine(threading.Thread):
             self.uniqueTagSchedule              = {}
             self.random_seed                    = None
             self.slotframe_period_count         = 0
+            # how the network is doing over time, which the .kpi files cannot
+            # say because they average over the whole run. Counting costs two
+            # increments and no random numbers.
+            self.app_sent                       = 0
+            self.app_received                   = 0
+            self.network_trace                  = network_trace.empty()
             self._init_additional_local_variables()
 
             # initialize parent class
@@ -334,6 +341,25 @@ class DiscreteEventEngine(threading.Thread):
             if getattr(mote.sf, 'QLEARNING_STATS', None):
                 self._save_qlearning_mote_stat(mote)
 
+    def save_network_trace(self):
+        """One time series per run, beside the per-mote learning statistics."""
+        if not self.network_trace['asn']:
+            return
+        self._write_run_file('network_trace.json', self.network_trace)
+
+    def _write_run_file(self, name, payload):
+        file_path = '../bin/simData/{0}/exec_numMotes_{1}/run_{2}/{3}'.format(
+            self.settings.logDirectory, len(self.motes), self.run_id, name
+        )
+        directory = os.path.dirname(file_path)
+        try:
+            os.makedirs(directory)
+        except OSError as exc:  # the directory already exists, which is fine
+            if exc.errno != errno.EEXIST:
+                raise
+        with open(file_path, 'w') as f:
+            json.dump(payload, f)
+
     def _save_qlearning_mote_stat(self, mote):
         current_id = mote.id
         file_path = '../bin/simData/{0}/exec_numMotes_{1}/run_{2}/{3}/qlearning_stats.json'.format(self.settings.logDirectory, len(self.motes), self.run_id, current_id)
@@ -360,6 +386,7 @@ class DiscreteEventEngine(threading.Thread):
 
     def _actionEndSim(self):
         self.save_qlearning_stats()
+        self.save_network_trace()
         with self.dataLock:
             self.goOn = False
 
@@ -367,6 +394,16 @@ class DiscreteEventEngine(threading.Thread):
         """Called at each end of slotframe_iteration."""
 
         slotframe_iteration = int(old_div(self.asn, self.settings.tsch_slotframeLength))
+
+        cada = getattr(
+            self.settings, 'NETWORK_TRACE_EVERY',
+            network_trace.DEFAULT_EVERY_SLOTFRAMES
+        )
+        if cada and slotframe_iteration % cada == 0:
+            self.network_trace['every'] = cada
+            network_trace.sample(
+                self.network_trace, self.asn, self.app_sent, self.app_received
+            )
 
         #time to notify scheduling function
         if self.slotframe_period_count == self.SLOTFRAME_PERIOD_SIZE-1:

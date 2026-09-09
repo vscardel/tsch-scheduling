@@ -34,7 +34,21 @@ from . import SimSettings
 
 class DotableDict(dict):
 
-    __getattr__= dict.__getitem__
+    def __getattr__(self, name):
+        """Attribute access by key, but a missing key is a missing attribute.
+
+        This used to be dict.__getitem__ outright, which raises KeyError for
+        anything absent. Python asks objects for optional hooks by attribute,
+        so copy.deepcopy asking for __deepcopy__ got a KeyError instead of the
+        AttributeError that means "I do not have one", and the copy failed
+        rather than falling back. It only showed up once a setting held nested
+        dictionaries, since those are the values that become DotableDict and
+        get deep-copied with the settings into the log's config line.
+        """
+        try:
+            return self[name]
+        except KeyError:
+            raise AttributeError(name)
 
     def __init__(self, d):
         self.update(**dict((k, self.parse(v))

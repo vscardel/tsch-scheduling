@@ -110,6 +110,12 @@ class AppBase(object):
         if self.mote.clear_to_send_EBs_DATA()==False:
             return
 
+        # one of the two counters behind the network time series. Counted
+        # here rather than at the caller so every application shares it, and
+        # after the clear-to-send check so it means packets that really went
+        # out.
+        self.engine.app_sent += 1
+
         # create
         packet = self._generate_packet(
             dstIp          = dstIp,
@@ -147,6 +153,9 @@ class AppRoot(AppBase):
 
     def recvPacket(self, packet):
         assert self.mote.dagRoot
+
+        # the other counter: every delivered upstream packet passes here
+        self.engine.app_received += 1
 
         # log and update mote stats
         self.log(
