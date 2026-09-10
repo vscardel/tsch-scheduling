@@ -269,19 +269,24 @@ def compute_confidence_interval(values, confidence=0.95):
     return (sample_mean - margin_error, sample_mean + margin_error)
 
 def load_kpis(folder_path, num_motes):
-    kpis = None
-    try:
-        with open(
-            os.path.join(
-                folder_path,
-                'output_cpu0.dat.kpi'.format(num_motes)
-            )
-        , 'r') as f:
-            json_string = f.read()
-            kpis = json.loads(json_string)
-    except Exception as e:
-        print(e)
-    return kpis
+    """Every run of the folder, not only the ones that landed on CPU 0.
+
+    This used to open output_cpu0.dat.kpi alone. The simulator writes one
+    file per CPU and the run is launched with ten, so nine tenths of the runs
+    never reached a figure and every box was drawn narrower than the data.
+    The num_motes argument was already unused, and the format call on a
+    string with no placeholder was the trace of that.
+    """
+    kpis = {}
+    for name in sorted(os.listdir(folder_path)):
+        if not name.endswith('.dat.kpi'):
+            continue
+        try:
+            with open(os.path.join(folder_path, name), 'r') as f:
+                kpis.update(json.loads(f.read()))
+        except Exception as e:
+            print(e)
+    return kpis or None
 
 
 def generate_folder_path(method_name):
@@ -441,6 +446,12 @@ if __name__ == '__main__':
         final_scores_tfq, final_scores_traffic, final_scores_queue , final_scores_qsbrc24, final_scores_msf, final_scores_emsf
     ], 'Scores')
 
-    generate_contribution_plot(contributions = [14.9, 64.6, 7])
+    # The three numbers that used to sit here were the factor
+    # contributions of the 2^3 factorial, written by hand. That factorial ran
+    # MSF in its empty cell, so each contribution mixed a state factor with a
+    # different scheduling function, and nothing in the code said where the
+    # numbers came from. They are not restored until the factorial is run
+    # with a stateless DynQ in that cell.
+    # generate_contribution_plot(contributions=[...])
 
     generate_reward_plot(generate_folder_path('traffic_queue_charge'))
