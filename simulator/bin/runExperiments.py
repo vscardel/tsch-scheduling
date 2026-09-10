@@ -10,6 +10,10 @@ import numpy as np
 import time
 
 from skopt import gp_minimize
+
+# the scenario and the anchor, shared by the sweep, the factorial and
+# the final comparison so none of them can declare a different one
+from scenario import DISTURBANCES, load_anchor
 from skopt.plots import plot_convergence
 
 MAX_FUNCTION_VALUE = 1
@@ -228,6 +232,9 @@ def configure_settings(settings, parameters):
         settings['settings']['regular']['factorial_combinations'] = factor_combinations.split(',')
     settings['log_directory_name']= args.output_folder
     settings['get_sync_node_info'] = args.sync_required
+    settings['settings']['regular']['disturbances'] = (
+        DISTURBANCES if getattr(args, 'disturbances', False) else []
+    )
 
     # Configure simulator with the parameters. The optimiser hands over a
     # positional list, in the order of parameters_position; a parameters file
@@ -393,6 +400,21 @@ if __name__ == '__main__':
     parser.add_argument('-is_min','--experiment_type', type=str, help='determines the time of experiment (minimization or 2^k)', required=True)
 
     parser.add_argument(
+        '--anchor',
+        help=(
+            'JSON of {learner: {SETTING: value}}. When given, every cell of '
+            'the factorial runs these core values instead of its own '
+            'optimised parameters file. The factorial needs that: with each '
+            'cell separately optimised, a main effect mixes the state factor '
+            'with a different learning rate, and the design no longer '
+            'measures what it says it measures.'
+        )
+    )
+    parser.add_argument(
+        '--disturbances', action='store_true',
+        help='run every cell in the disturbed scenario'
+    )
+    parser.add_argument(
         '--empty-cell-learner', action='store_true',
         help=(
             'run the empty cell as the learner with no state factors, under '
@@ -502,7 +524,12 @@ if __name__ == '__main__':
         plt.savefig("convergence_plot{0}.png".format(random_num))
 
     else:
-        print('lets do the 2^k factorial experiment')   
+        print('lets do the 2^k factorial experiment')
+        ancora = load_anchor(args.anchor) if args.anchor else None
+        if ancora is not None:
+            print('  every cell on the chosen core values: {0}'.format(ancora))
+        print('  disturbances: {0}'.format(
+            len(DISTURBANCES) if args.disturbances else 0))
 
         # build all possibilities of factors
         factors = ['traffic', 'queue', 'charge']
@@ -545,8 +572,17 @@ if __name__ == '__main__':
             cell = cell_name(factor_combination, args.empty_cell_learner)
             output_folder = '{0}_{1}'.format(cell, args.tag) if args.tag else cell
 
-            # empty combination
-            if not factor_combination:
+            # The hyperparameters of this cell. With an anchor they are the
+            # same in every cell, which is what lets a main effect be read as
+            # the effect of the state factor. Without one, each cell keeps
+            # the parameters its own optimisation found, which is how the
+            # published factorial ran.
+            if ancora is not None:
+                aprendiz = ('qstatic'
+                            if factor_combination == ['qlearningSBRC24']
+                            else 'dynq')
+                parameters_list = dict(ancora.get(aprendiz, {}))
+            elif not factor_combination:
                 parameters_list = []
             else:
                 parameters_list = load_optimal_parameters(

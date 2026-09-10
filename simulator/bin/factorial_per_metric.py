@@ -28,16 +28,27 @@ from compare_schedulers import METRICS, load_runs
 FACTORS = ['traffic', 'queue', 'charge']
 
 
-def cell_name(factors):
-    return '_'.join(factors) if factors else 'baseline'
+# The empty cell of the design is the learner with no state factors, a
+# one-row table. The published factorial ran MSF there, under the name
+# baseline, so every main effect compared a state factor against another
+# scheduling function: the latency effect of the traffic factor read as
+# -0.805 s with that cell in the arithmetic and -0.005 s without it. So the
+# stateless learner is the default, and the contaminated arithmetic has to be
+# asked for by name.
+EMPTY_CELL = 'sem_estado'
+EMPTY_CELL_MSF = 'baseline'
 
 
-def cells():
+def cell_name(factors, empty=EMPTY_CELL):
+    return '_'.join(factors) if factors else empty
+
+
+def cells(empty=EMPTY_CELL):
     """The eight combinations, each as (name, the factors it switched on)."""
     saida = []
     for combination in itertools.product([0, 1], repeat=len(FACTORS)):
         presentes = [FACTORS[i] for i, on in enumerate(combination) if on]
-        saida.append((cell_name(presentes), presentes))
+        saida.append((cell_name(presentes, empty), presentes))
     return saida
 
 
@@ -57,14 +68,28 @@ def main():
     parser.add_argument('--inputfolder', required=True)
     parser.add_argument('--motes', type=int, default=50)
     parser.add_argument('--out', default=None)
+    parser.add_argument(
+        '--empty-cell', default=EMPTY_CELL,
+        help=(
+            'folder of the cell where no state factor is on. The default is '
+            'the stateless learner. Pass {0} to reproduce the published '
+            'arithmetic, which ran MSF there and so mixed every main effect '
+            'with a different scheduling function.'.format(EMPTY_CELL_MSF)
+        )
+    )
     args = parser.parse_args()
 
+    vazia = args.empty_cell
+    if vazia == EMPTY_CELL_MSF:
+        print('AVISO: a celula vazia e o MSF, entao cada efeito principal')
+        print('       compara um fator de estado contra outro escalonador.')
+
     medias = {}
-    for nome, _ in cells():
+    for nome, _ in cells(vazia):
         runs = read_cell(args.inputfolder, nome, args.motes)
         if runs:
             medias[nome] = runs
-    ausentes = [n for n, _ in cells() if n not in medias]
+    ausentes = [n for n, _ in cells(vazia) if n not in medias]
     if ausentes:
         print('sem resultados para: {0}'.format(', '.join(ausentes)))
 
@@ -75,7 +100,7 @@ def main():
             valor = cell_means(runs, reader)
             if valor is not None:
                 por_celula[nome] = valor
-        if len(por_celula) < len(list(cells())):
+        if len(por_celula) < len(list(cells(vazia))):
             continue
 
         print('')
@@ -85,8 +110,10 @@ def main():
 
         efeitos = {}
         for fator in FACTORS:
-            com = [por_celula[cell_name(f)] for n, f in cells() if fator in f]
-            sem = [por_celula[cell_name(f)] for n, f in cells() if fator not in f]
+            com = [por_celula[cell_name(f, vazia)]
+                   for n, f in cells(vazia) if fator in f]
+            sem = [por_celula[cell_name(f, vazia)]
+                   for n, f in cells(vazia) if fator not in f]
             efeitos[fator] = sum(com) / len(com) - sum(sem) / len(sem)
         print('  efeitos principais:')
         for fator, efeito in sorted(efeitos.items(), key=lambda kv: -abs(kv[1])):

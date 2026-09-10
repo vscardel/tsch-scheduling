@@ -34,6 +34,9 @@ import json
 import os
 
 from runExperiments import search_space
+# on their own so the factorial can import them without a cycle: this
+# module imports runExperiments, and runExperiments needs them too
+from scenario import DISTURBANCES, load_anchor
 
 
 FACTORS_STATE = ['traffic', 'queue', 'charge']
@@ -169,36 +172,6 @@ def factors_of(learner, grupo):
 def load_parameters(nome):
     with open('./{0}_parameters.json'.format(nome)) as f:
         return json.load(f)
-
-
-def load_anchor(path):
-    """Per learner, the settings the arms of this sweep depart from.
-
-    A coordinate sweep measures sensitivity around one point, so the point has
-    to be the one being defended. Two reasons it is no longer the published
-    configuration. The published alpha of the dynamic learner, 0.786, sits
-    outside the range the 6TiSCH literature uses, and the probe of 2026-09-09
-    measured it as a tie with 0.1 both with disturbances and without, so the
-    citable value costs nothing on the score. And the sweep of the task
-    parameters runs after this one, anchored on whatever this one chooses.
-
-    The file is read as {learner: {SETTING: value}} and applied last, so it
-    wins over the published parameters.
-    """
-    if not path:
-        return {}
-    with open(path) as f:
-        return json.load(f)
-
-
-# The two disturbances of the probe, in the positions it validated: 40% of the
-# run for the agent to settle before the first, and 30% after the last to
-# measure the recovery. Both together cost about 0.077 of score on the
-# published DynQ, ten runs out of ten.
-DISTURBANCES = [
-    {'asn_fraction': 0.40, 'kind': 'traffic', 'factor': 0.5},
-    {'asn_fraction': 0.70, 'kind': 'link_quality', 'share': 0.2, 'pdr': 0.4},
-]
 
 
 def baseline_settings(base, learner, anchor=None):

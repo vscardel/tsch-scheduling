@@ -32,9 +32,9 @@ import json
 import math
 import os
 
-# the disturbance list and the anchor reader live with the sweep that defined
-# them, so the two runs cannot drift apart on either
-from runSensitivity import DISTURBANCES, load_anchor
+# the scenario and the anchor, shared by the sweep, the factorial and the
+# final comparison so none of them can declare a different one
+from scenario import DISTURBANCES, load_anchor
 
 
 BASE_MOTES = 50
