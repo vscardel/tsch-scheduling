@@ -142,3 +142,78 @@ def test_learning_arms_are_asked_for_by_name(base):
     """A plain run of the comparison is the six arms it always was, so nobody
     runs eight hours of controls by forgetting a flag."""
     assert 'dynq_aprendido' not in [a[0] for a in ARMS]
+
+
+# ------------------------------------ the core values the sweep chose
+
+ANCORA_ESCOLHIDA = {
+    'dynq'   : {'ALFA': 0.1, 'BETA': 0.95, 'MIN_EPSLON': 0.15},
+    'qstatic': {'BETA': 0.7},
+}
+
+
+def test_the_anchor_reaches_a_learner_by_its_scheduling_function():
+    """Not by label, so the controls get the same core values.
+
+    dynq_aleatorio is the same agent as dynq_aprendido with the table
+    switched off. If the anchor were matched by label the control would run
+    the published parameters and the pair would differ in four things
+    instead of one.
+    """
+    from runComparison import anchor_for
+    assert anchor_for('Qlearning', ANCORA_ESCOLHIDA) \
+        == ANCORA_ESCOLHIDA['dynq']
+    assert anchor_for('QlearningSBRC24', ANCORA_ESCOLHIDA) \
+        == ANCORA_ESCOLHIDA['qstatic']
+
+
+def test_a_scheduler_that_does_not_learn_gets_no_anchor():
+    from runComparison import anchor_for
+    for sf in ('MSF', 'EMSF', 'RLSF'):
+        assert anchor_for(sf, ANCORA_ESCOLHIDA) == {}
+
+
+def test_a_learning_pair_differs_only_in_consulting_the_table(base):
+    """The whole design of the learning test rests on this."""
+    from runComparison import LEARNING_ARMS, build_config
+    por_nome = dict((a[0], a) for a in LEARNING_ARMS)
+    for aprendido, aleatorio in [('dynq_aprendido', 'dynq_aleatorio'),
+                                 ('qstatic_aprendido', 'qstatic_aleatorio')]:
+        a = build_config(base, por_nome[aprendido], 50, 10, 10, 15000,
+                         ANCORA_ESCOLHIDA, True)['settings']['regular']
+        b = build_config(base, por_nome[aleatorio], 50, 10, 10, 15000,
+                         ANCORA_ESCOLHIDA, True)['settings']['regular']
+        diferencas = [
+            k for k in set(a) | set(b) if a.get(k) != b.get(k)
+        ]
+        assert diferencas == ['LEARNED_POLICY'], (aprendido, diferencas)
+
+
+def test_the_anchor_carries_into_the_learning_arms(base):
+    from runComparison import LEARNING_ARMS, build_config
+    for arm in LEARNING_ARMS:
+        regular = build_config(base, arm, 50, 10, 10, 15000,
+                               ANCORA_ESCOLHIDA, True)['settings']['regular']
+        esperado = (ANCORA_ESCOLHIDA['dynq'] if arm[1] == 'Qlearning'
+                    else ANCORA_ESCOLHIDA['qstatic'])
+        for chave, valor in esperado.items():
+            assert regular[chave] == valor, (arm[0], chave)
+
+
+def test_an_arms_own_override_beats_the_anchor(base):
+    """The anchor is a starting point, not a lock."""
+    from runComparison import build_config
+    arm = ('teste', 'Qlearning', 'traffic_queue_charge', {'ALFA': 0.42})
+    regular = build_config(base, arm, 50, 10, 10, 15000,
+                           ANCORA_ESCOLHIDA, True)['settings']['regular']
+    assert regular['ALFA'] == 0.42
+    assert regular['BETA'] == 0.95
+
+
+def test_disturbances_are_all_or_nothing(base):
+    from runComparison import ALL_ARMS, build_config, DISTURBANCES
+    for arm in ALL_ARMS:
+        com = build_config(base, arm, 50, 10, 10, 15000, None, True)
+        sem = build_config(base, arm, 50, 10, 10, 15000, None, False)
+        assert com['settings']['regular']['disturbances'] == DISTURBANCES
+        assert sem['settings']['regular']['disturbances'] == []
