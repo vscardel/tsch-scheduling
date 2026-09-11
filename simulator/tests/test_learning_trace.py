@@ -148,6 +148,12 @@ def agente(sim_engine, monkeypatch, sf_class, learned=None):
     monkeypatch.setattr(mote, 'clear_to_send_EBs_DATA', lambda: True)
     monkeypatch.setattr(mote.sf, 'sixp_interface_add', lambda **kw: None)
     monkeypatch.setattr(mote.sf, 'sixp_interface_delete', lambda **kw: None)
+    if sf_class == 'Qlearning':
+        # With no negotiated cells and an empty queue the published reward
+        # (Equation 16) is identically zero, and a zero reward leaves nothing
+        # in the trace to test. These tests are about the trace, not the
+        # reward, so give the agent a constant one.
+        monkeypatch.setattr(mote.sf, 'compute_reward', lambda: 1.0)
     return mote.sf
 
 
