@@ -27,11 +27,18 @@ import matplotlib.pyplot as plt
 import figures
 
 
+def stats_files(inputfolder):
+    """Every qlearning_stats.json below the folder, python 2 and 3 alike."""
+    for raiz, _, arquivos in os.walk(inputfolder):
+        for nome in arquivos:
+            if nome == 'qlearning_stats.json':
+                yield os.path.join(raiz, nome)
+
+
 def per_run_shares(inputfolder, rows):
     """One list per row: the share of visits it got in each run."""
     por_run = collections.defaultdict(collections.Counter)
-    for caminho in glob.glob(os.path.join(
-            inputfolder, '**', 'qlearning_stats.json'), recursive=True):
+    for caminho in stats_files(inputfolder):
         run = [p for p in caminho.split(os.sep) if p.startswith('run_')]
         if not run:
             continue

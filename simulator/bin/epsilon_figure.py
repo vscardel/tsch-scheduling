@@ -22,17 +22,26 @@ import matplotlib.pyplot as plt
 import figures
 
 
+def stats_files(inputfolder):
+    """Every qlearning_stats.json below the folder, python 2 and 3 alike."""
+    for raiz, _, arquivos in os.walk(inputfolder):
+        for nome in arquivos:
+            if nome == 'qlearning_stats.json':
+                yield os.path.join(raiz, nome)
+
+
 def trajectory(inputfolder, slotframe_length=101):
     """(fraction of the run, epsilon) for the mote with most decisions."""
     melhor = None
-    for caminho in glob.glob(os.path.join(
-            inputfolder, '**', 'qlearning_stats.json'), recursive=True):
+    for caminho in stats_files(inputfolder):
         with open(caminho) as f:
             d = json.load(f)
+        if not d.get('DECISIONS') or not d.get('EPSILON'):
+            continue            # a run from before the trace existed
         if melhor is None or len(d['DECISIONS']) > len(melhor['DECISIONS']):
             melhor = d
     if melhor is None:
-        raise ValueError('no qlearning_stats.json under %s' % inputfolder)
+        raise ValueError('no decision trace under %s' % inputfolder)
     asn_por_passo = {int(k): v['asn'] for k, v in melhor['DECISIONS'].items()}
     pontos = sorted(
         (asn_por_passo[int(k)], v)
