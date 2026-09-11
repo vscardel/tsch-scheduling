@@ -43,6 +43,19 @@ def run_lifetime(run):
     for mote, mote_kpis in run.items():
         if mote == 'global-stats':
             continue
+        # Not every key of a run is a mote. compare_schedulers attaches the
+        # learning quantities under 'learning-stats', and counting that as a
+        # mote with no lifetime put a zero into the mean: the average divided
+        # by 51 instead of 50, which lowered the lifetime of every learner by
+        # about 2% and raised its score. MSF and EMSF leave no trace, so they
+        # kept theirs, and every comparison between a learner and one of them
+        # was biased against the learner.
+        #
+        # A mote always carries lifetime_AA_years, as a number or, when it
+        # could not be estimated, as a string that still counts as zero. An
+        # entry without the key is not a mote.
+        if not isinstance(mote_kpis, dict) or 'lifetime_AA_years' not in mote_kpis:
+            continue
         lifetime = mote_kpis.get('lifetime_AA_years')
         if not isinstance(lifetime, (int, float)):
             lifetime = 0
