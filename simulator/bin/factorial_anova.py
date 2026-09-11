@@ -151,6 +151,16 @@ def main():
         if not runs:
             raise SystemExit('sem resultados para a celula %s' % nome)
         runs_by_cell[nome] = runs
+    # the design is paired by seed, so a cell that ran more seeds than the
+    # others (MSF from the final comparison, say) is cut to the shared ones
+    comuns = set.intersection(*[set(r) for r in runs_by_cell.values()])
+    for nome in runs_by_cell:
+        extra = set(runs_by_cell[nome]) - comuns
+        if extra:
+            print('%s: %d rodadas a mais, usando as %d comuns'
+                  % (nome, len(extra), len(comuns)))
+        runs_by_cell[nome] = {k: v for k, v in runs_by_cell[nome].items()
+                              if k in comuns}
 
     responses = [('score', score_model.run_score, 'lower')] + [
         (m, reader, direction) for m, reader, direction in METRICS
