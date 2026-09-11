@@ -110,6 +110,13 @@ def _final_policy_gap(run):
     return aprendizado['final_policy_gap'] if aprendizado else None
 
 
+# up to this many pairs the signed rank test is computed exactly rather than
+# through the normal approximation, which is unreliable for small samples
+EXACT_UP_TO = 25
+
+# the two that are read from the per mote traces rather than from the .kpi
+TRACE_METRICS = ('mean_reward', 'final_policy_gap')
+
 METRICS = [
     ('score',            _score,            'lower'),
     ('latency',          _latency,          'lower'),
@@ -213,6 +220,45 @@ def holm(pvalues):
     return adjusted
 
 
+def exact_signed_rank_p(differences):
+    """Two sided p of the Wilcoxon signed rank test, computed exactly.
+
+    The scipy in this image is 1.2.3, whose wilcoxon has no exact mode and
+    always uses the normal approximation, warning that the sample is too small
+    for it. With ten paired runs that matters: ten runs all falling the same
+    way have an exact p of 0.002, which survives a Holm correction over ten
+    pairs, and an approximate p of 0.005, which does not. The comparison of
+    five schedulers is exactly that case, so the decision would be an artefact
+    of the approximation rather than of the data.
+
+    The null distribution is the sum of the ranks carrying a plus sign, with
+    every sign equally likely. Ranks are doubled so mid ranks from ties stay
+    integers, and the distribution is built by convolution rather than by
+    enumerating the two to the n sign vectors.
+    """
+    nao_nulos = [d for d in differences if d != 0]
+    n = len(nao_nulos)
+    if n == 0:
+        return 1.0
+    postos = [int(round(2 * r)) for r in _ranks([abs(d) for d in nao_nulos])]
+    total = sum(postos)
+
+    # contagens[s] = how many sign vectors give the positive ranks sum s
+    contagens = [0] * (total + 1)
+    contagens[0] = 1
+    for posto in postos:
+        for s in range(total, posto - 1, -1):
+            if contagens[s - posto]:
+                contagens[s] += contagens[s - posto]
+
+    observado = sum(p for p, d in zip(postos, nao_nulos) if d > 0)
+    centro = total / 2.0
+    desvio = abs(observado - centro)
+    casos = sum(c for s, c in enumerate(contagens)
+                if abs(s - centro) >= desvio - 1e-9)
+    return min(1.0, casos / float(2 ** n))
+
+
 def compare(runs_by_scheduler, metric_reader, direction):
     """Every pair of schedulers on one metric."""
     names = sorted(runs_by_scheduler)
@@ -224,11 +270,14 @@ def compare(runs_by_scheduler, metric_reader, direction):
         if len(serie_a) < 3:
             continue
         differences = [x - y for x, y in zip(serie_a, serie_b)]
-        try:
-            _, p = wilcoxon(serie_a, serie_b)
-        except ValueError:
-            # every difference is zero, so there is nothing to test
-            p = 1.0
+        if len(differences) <= EXACT_UP_TO:
+            p = exact_signed_rank_p(differences)
+        else:
+            try:
+                _, p = wilcoxon(serie_a, serie_b)
+            except ValueError:
+                # every difference is zero, so there is nothing to test
+                p = 1.0
         rows.append({
             'a': a, 'b': b, 'n': len(differences),
             'median_a': float(np.median(serie_a)),
@@ -261,7 +310,22 @@ def main():
     parser.add_argument('--prefix', default='',
                         help='folder name prefix, e.g. n50_ for n50_MSF')
     parser.add_argument('--out', default=None, help='write the report as JSON')
+    parser.add_argument(
+        '--network-only', action='store_true',
+        help=(
+            'report the network metrics and leave the learning ones out. '
+            'The learning metrics are read from the per mote traces, which '
+            'are gigabytes for a long run and have killed this process for '
+            'want of memory while a simulation was running. They also mean '
+            'nothing across schedulers, since each learner has its own '
+            'reward scale; they are there to compare an arm with its own '
+            'random control.'
+        )
+    )
     args = parser.parse_args()
+
+    metricas = [m for m in METRICS if not args.network_only
+                or m[0] not in TRACE_METRICS]
 
     runs_by_scheduler = {}
     for sf in args.schedulers:
@@ -278,10 +342,11 @@ def main():
         # mote per run, and are simply absent for a scheduler that does not
         # learn
         aprendidos = 0
-        for run_id, valores in per_run_metrics(folder).items():
-            if run_id in runs:
-                runs[run_id]['learning-stats'] = valores
-                aprendidos += 1
+        if not args.network_only:
+            for run_id, valores in per_run_metrics(folder).items():
+                if run_id in runs:
+                    runs[run_id]['learning-stats'] = valores
+                    aprendidos += 1
         runs_by_scheduler[sf] = runs
         print('{0}: {1} runs, {2} com traco de aprendizado'.format(
             sf, len(runs), aprendidos))
@@ -290,7 +355,7 @@ def main():
         raise SystemExit('need at least two schedulers with results')
 
     report = {}
-    for name, reader, direction in METRICS:
+    for name, reader, direction in metricas:
         rows = compare(runs_by_scheduler, reader, direction)
         if not rows:
             continue
