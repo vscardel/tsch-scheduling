@@ -60,10 +60,10 @@ def main():
     for nome, pasta, colour in (('DynQ', args.dynq, colours[0]),
                                 ('Q-static', args.qstatic, colours[1])):
         x, y = trajectory(pasta)
-        ax.plot(x / total, y, color=colour, linewidth=2, label=nome)
+        ax.plot(x / total, y, color=colour[:3], linewidth=1.8, label=nome)
         print('%-9s %d decisions, epsilon from %.3f to %.3f'
               % (nome, len(x), y[0], y[-1]))
-    ax.axhline(args.threshold, color='black', linestyle=':', linewidth=1)
+    ax.axhline(args.threshold, color='gray', linestyle='--', linewidth=1.2)
     ax.text(0.99, args.threshold + 0.02,
             r'Q-static threshold $\epsilon_{th}$', ha='right', fontsize=9)
     ax.set_xlim(0, 1)

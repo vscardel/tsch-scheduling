@@ -755,50 +755,66 @@ controle aleatorio.
 
 # ------------------------------------------------------------------- plots
 
+def series_label(nome):
+    """The English label of an arm, for the figure legend.
+
+    The learning arms are named by what they do; anything else keeps its
+    folder name, which is what the sweep figures show.
+    """
+    if 'aprendido' in nome:
+        return 'learned policy'
+    if 'aleatorio' in nome:
+        return 'random control'
+    return os.path.basename(nome.rstrip('/'))
+
+
+def plot_order(nome):
+    """Learned arm first, so it always takes the first colour of the palette."""
+    return (0 if 'aprendido' in nome else 1 if 'aleatorio' in nome else 2, nome)
+
+
 def plot(destino, curvas_por_nome, bins, fractions=()):
-    """The figure reviewer 3 asked for: averaged over runs, with a band."""
+    """The figure reviewer 3 asked for: averaged over runs, with a band.
+
+    Drawn through figures.curves so it matches every other figure of the
+    paper: same palette, same style file, PDF out.
+    """
     try:
-        import matplotlib
-        matplotlib.use('Agg')
-        import matplotlib.pyplot as plt
+        import figures
     except ImportError:
         print('matplotlib ausente, sem figuras')
         return
 
-    titulos = [
-        ('reward', 'recompensa media por decisao'),
-        ('cumulative', 'recompensa acumulada'),
-        ('td_error', '|erro TD|'),
-        ('churn', 'linhas que trocaram de acao, por decisao'),
+    ylabels = [
+        ('reward', 'Reward per decision'),
+        ('cumulative', 'Cumulative reward'),
+        ('td_error', '|TD error|'),
+        ('churn', 'Policy changes per decision'),
     ]
     if not os.path.isdir(destino):
         os.makedirs(destino)
 
-    for chave, titulo in titulos:
-        fig, ax = plt.subplots(figsize=(6, 3.6))
-        for nome, resumo in sorted(curvas_por_nome.items()):
+    x = [(i + 0.5) / float(bins) for i in range(bins)]
+    for chave, ylabel in ylabels:
+        series, bands, labels = [], [], []
+        for nome, resumo in sorted(curvas_por_nome.items(),
+                                   key=lambda par: plot_order(par[0])):
             curva = resumo['curves'][chave]
-            x = [i / float(bins) for i in range(bins)]
-            pares = [
-                (xi, m, lo, hi) for xi, m, lo, hi in
-                zip(x, curva['mean'], curva['low'], curva['high'])
-                if m is not None
-            ]
-            if not pares:
+            if all(m is None for m in curva['mean']):
                 continue
-            xs = [p[0] for p in pares]
-            ax.plot(xs, [p[1] for p in pares], label=nome)
-            ax.fill_between(xs, [p[2] for p in pares], [p[3] for p in pares],
-                            alpha=0.2)
-        for fracao in fractions:
-            ax.axvline(fracao, color='0.4', linestyle=':', linewidth=1)
-        ax.set_xlabel('fracao da rodada (eixo de ASN)')
-        ax.set_ylabel(titulo)
-        ax.legend(fontsize='small')
-        fig.tight_layout()
-        caminho = os.path.join(destino, 'learning_{0}.png'.format(chave))
-        fig.savefig(caminho, dpi=150)
-        plt.close(fig)
+            nan = float('nan')
+            series.append([nan if m is None else m for m in curva['mean']])
+            bands.append((
+                [nan if v is None else v for v in curva['low']],
+                [nan if v is None else v for v in curva['high']],
+            ))
+            labels.append(series_label(nome))
+        if not series:
+            continue
+        caminho = os.path.join(destino, 'learning_{0}.pdf'.format(chave))
+        figures.curves(x, series, labels, ylabel, caminho,
+                       xlabel='Fraction of the run', bands=bands,
+                       marcos=list(fractions))
         print('escrito em {0}'.format(caminho))
 
 

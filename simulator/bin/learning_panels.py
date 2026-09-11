@@ -55,13 +55,13 @@ def draw(ax, report, chave, marcos):
         media = np.array(curva['mean'], dtype=float)
         x = (np.arange(len(media)) + 0.5) / len(media)
         ok = np.isfinite(media)
-        ax.plot(x[ok], media[ok], color=colour, linewidth=2, label=nome)
+        ax.plot(x[ok], media[ok], color=colour[:3], linewidth=1.8, label=nome)
         baixo = np.array(curva['low'], dtype=float)
         alto = np.array(curva['high'], dtype=float)
-        ax.fill_between(x[ok], baixo[ok], alto[ok], color=colour, alpha=0.2,
+        ax.fill_between(x[ok], baixo[ok], alto[ok], color=colour[:3], alpha=0.18,
                         linewidth=0)
     for m in marcos:
-        ax.axvline(m, color='black', linestyle=':', linewidth=1)
+        ax.axvline(m, color='gray', linestyle='--', linewidth=1.2)
     ax.set_xlim(0, 1)
     ax.grid(True, linewidth=0.5, alpha=0.5)
 
