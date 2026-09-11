@@ -217,3 +217,30 @@ def test_disturbances_are_all_or_nothing(base):
         sem = build_config(base, arm, 50, 10, 10, 15000, None, False)
         assert com['settings']['regular']['disturbances'] == DISTURBANCES
         assert sem['settings']['regular']['disturbances'] == []
+
+
+# Reviewer 1.4 asked for more than one traffic model and one topology. The
+# extra scenarios must differ from the published one in that key alone.
+
+def test_without_scenario_flags_the_config_is_the_published_one(base):
+    from runComparison import ARMS, build_config
+    for arm in ARMS:
+        regular = build_config(base, arm, 50, 10, 10, 15000, None, True)
+        regular = regular['settings']['regular']
+        assert regular['app'] == base['settings']['regular']['app']
+        assert regular['conn_class'] == base['settings']['regular']['conn_class']
+
+
+@pytest.mark.parametrize('kwargs, chave, valor', [
+    ({'app': 'AppPeriodic'}, 'app', 'AppPeriodic'),
+    ({'conn_class': 'Linear'}, 'conn_class', 'Linear'),
+])
+def test_a_scenario_flag_changes_its_own_key_and_nothing_else(base, kwargs, chave, valor):
+    from runComparison import ARMS, build_config
+    for arm in ARMS:
+        sem = build_config(base, arm, 50, 10, 10, 15000, None, True)
+        com = build_config(base, arm, 50, 10, 10, 15000, None, True, **kwargs)
+        sem, com = sem['settings']['regular'], com['settings']['regular']
+        diferentes = {k for k in set(sem) | set(com) if sem.get(k) != com.get(k)}
+        assert diferentes == {chave}
+        assert com[chave] == valor

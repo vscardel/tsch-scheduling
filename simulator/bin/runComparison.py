@@ -102,7 +102,7 @@ def square_side(num_motes):
 
 
 def build_config(base, arm, num_motes, num_runs, num_cpus, slotframes,
-                 anchor=None, disturbed=False):
+                 anchor=None, disturbed=False, app=None, conn_class=None):
     label, sf_class, parameters_name, overrides = arm
     settings = json.loads(json.dumps(base))  # a copy, not a view
     regular = settings['settings']['regular']
@@ -118,6 +118,14 @@ def build_config(base, arm, num_motes, num_runs, num_cpus, slotframes,
     regular['exec_numSlotframesPerRun'] = slotframes
     regular['conn_random_square_side'] = square_side(num_motes)
     regular['disturbances'] = DISTURBANCES if disturbed else []
+    # Reviewer 1.4: one traffic model and one topology. These two keys are the
+    # whole difference between the published scenario and the extra ones, so
+    # they are set here and nowhere else; left out, the scenario is the
+    # published one, byte for byte.
+    if app:
+        regular['app'] = app
+    if conn_class:
+        regular['conn_class'] = conn_class
     if sf_class == 'Qlearning':
         regular['factorial_combinations'] = FACTORS
         regular['STATE_SIZE'] = 2 ** len(FACTORS)
@@ -140,6 +148,12 @@ def main():
                              'values chosen by the sweep')
     parser.add_argument('--disturbances', action='store_true',
                         help='run every arm in the disturbed scenario')
+    parser.add_argument('--app',
+                        help='application class, e.g. AppPeriodic; default '
+                             'is the one in config.json')
+    parser.add_argument('--conn-class', dest='conn_class',
+                        help='topology class, e.g. Linear; default is the '
+                             'one in config.json')
     args = parser.parse_args()
 
     pedidos = (
@@ -161,7 +175,7 @@ def main():
         for arm in arms:
             settings = build_config(
                 base, arm, num_motes, args.runs, args.cpus, args.slotframes,
-                anchor, args.disturbances
+                anchor, args.disturbances, args.app, args.conn_class
             )
             nome = settings['log_directory_name']
             config_name = 'config_{0}.json'.format(nome)
