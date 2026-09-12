@@ -68,17 +68,24 @@ def cumulative_reward_curve(pasta, zero_fill=False, min_share=0.5):
         with open(caminho) as f:
             d = json.load(f)
         acumulado = d.get('CUMULATIVE_REWARD')
-        if acumulado:
-            series.append({int(k): v for k, v in acumulado.items()})
+        if acumulado is None:
+            continue
+        if not acumulado and not zero_fill:
+            # a mote that never decided has nothing to average; the published
+            # arithmetic keeps it and counts it as zero in every episode
+            continue
+        series.append({int(k): v for k, v in acumulado.items()})
     if not series:
         raise ValueError('no CUMULATIVE_REWARD under %s' % pasta)
-    ultimo = max(max(s) for s in series)
+    ultimo = max(max(s) for s in series if s)
     episodios = range(1, ultimo + 1)
     media, presentes = [], []
     for e in episodios:
         valores = [s[e] for s in series if e in s]
         presentes.append(len(valores))
         if zero_fill:
+            # the published arithmetic: a mote that has not reached this
+            # episode, or never decided at all, counts as a zero
             media.append(sum(valores) / float(len(series)))
         else:
             media.append(np.mean(valores) if valores else float('nan'))
