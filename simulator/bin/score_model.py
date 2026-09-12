@@ -65,13 +65,32 @@ def run_lifetime(run):
     return sum(lifetimes) / float(len(lifetimes))
 
 
+def as_number(value, divide_by=1.0):
+    """The value as a float, or None when the simulator could not compute it.
+
+    compute_kpis writes the string 'N/A' wherever a statistic has no sample:
+    a run where nothing arrived has no latency and no delivery ratio, and on
+    the Linear topology, where the far motes may never join, whole runs come
+    out that way. Reading the string as a number scored a run on a value that
+    does not exist, and in python 2 it did so silently, since a string
+    compares greater than any float.
+    """
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    return value / divide_by
+
+
 def run_metrics(run):
-    """The four quantities the score is built from, for one run."""
+    """The four quantities the score is built from, for one run.
+
+    A quantity the run does not have is None, and a run missing any of them
+    cannot be scored.
+    """
     g = run['global-stats']
     return {
-        'latency': g['e2e-upstream-latency'][0]['mean'],
-        'pdr': g['e2e-upstream-delivery'][0]['value'],
-        'join_time': g['joining-time'][0]['mean'] / 100.0,
+        'latency': as_number(g['e2e-upstream-latency'][0]['mean']),
+        'pdr': as_number(g['e2e-upstream-delivery'][0]['value']),
+        'join_time': as_number(g['joining-time'][0]['mean'], 100.0),
         'lifetime': run_lifetime(run),
     }
 
@@ -88,4 +107,7 @@ def score(metrics, weights=None, thresholds=None, smoothness=None):
 
 
 def run_score(run, weights=None, thresholds=None, smoothness=None):
-    return score(run_metrics(run), weights, thresholds, smoothness)
+    metrics = run_metrics(run)
+    if any(v is None for v in metrics.values()):
+        return None
+    return score(metrics, weights, thresholds, smoothness)

@@ -39,25 +39,25 @@ import numpy as np
 from scipy.stats import wilcoxon
 
 from learning_report import per_run_metrics
-from score_model import run_score
+from score_model import run_score, as_number
 from runExperiments import compute_run_lifetime
 
 
 # metric name -> (how to read it from one run, whether more is better)
 def _latency(run):
-    return run['global-stats']['e2e-upstream-latency'][0]['mean']
+    return as_number(run['global-stats']['e2e-upstream-latency'][0]['mean'])
 
 
 def _pdr(run):
-    return run['global-stats']['e2e-upstream-delivery'][0]['value']
+    return as_number(run['global-stats']['e2e-upstream-delivery'][0]['value'])
 
 
 def _join(run):
-    return run['global-stats']['joining-time'][0]['mean'] / 100.0
+    return as_number(run['global-stats']['joining-time'][0]['mean'], 100.0)
 
 
 def _lifetime_min(run):
-    return run['global-stats']['network_lifetime'][0]['min']
+    return as_number(run['global-stats']['network_lifetime'][0]['min'])
 
 
 def _lifetime_mean(run):
