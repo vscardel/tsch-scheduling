@@ -10,6 +10,10 @@ import numpy as np
 import time
 
 from skopt import gp_minimize
+
+# the scenario and the anchor, shared by the sweep, the factorial and
+# the final comparison so none of them can declare a different one
+from scenario import DISTURBANCES, load_anchor
 from skopt.plots import plot_convergence
 
 MAX_FUNCTION_VALUE = 1
@@ -27,35 +31,49 @@ def convert_types(obj):
     else:
         return obj
 
-# What the Bayesian search varies, and over what range. Q-static still decides
-# whether to explore by comparing epsilon against EPSLON_THRESHOLD, so the
-# threshold is a real parameter for it. DynQ is epsilon-greedy: epsilon is the
-# chance of exploring and there is no threshold to cross, so searching it there
-# would spend evaluations on a dimension that changes nothing.
-# The ranges are wider than the ones the submitted results came from. A first
-# pass over them put the full DynQ at ALFA 0.9 and EPSLON_DECAY_RATE 0.09, both
-# sitting exactly on their old upper bound, with a third configuration close
-# behind on ALFA and three of four near the cap on the decay. An optimum on the
-# edge of the box is the box talking, not the method, and it would have gone
-# into the hyperparameter table for a reviewer to notice.
+# The ranges the core Q-learning parameters are chosen from, and why they are
+# these ranges.
 #
-# The old bounds were inherited from the version that still had
-# EPSLON_THRESHOLD, where the decay governed how long until the switch flipped.
-# Under epsilon-greedy the decay governs how long the agent keeps drawing at
-# random, and wanting to leave that phase sooner is a reasonable thing for it
-# to want.
+# The environment is non-stationary: every node learns while its neighbours
+# learn, and traffic and link quality move underneath all of them. Sutton and
+# Barto, "Tracking a Nonstationary Problem", is explicit about what that means
+# for the learning rate. With a constant step size the second convergence
+# condition is not met, so "the estimates never completely converge but
+# continue to vary in response to the most recently received rewards", and
+# they add that this "is actually desirable in a nonstationary environment".
+# Decaying the rate towards zero would buy a guarantee that does not apply
+# here anyway, since it assumes a stationary MDP, and would cost the agent the
+# ability to notice change.
+#
+# So the rate stays constant and the question is only how large. Two 6TiSCH
+# Q-learning schedulers from the same group answer it, and one of them is the
+# RL-SF baseline in this repository:
+#
+#   Pratama and Chung, ICEIEC 2022          alpha 0.1   beta 0.95  eps floor 0.1
+#   Pratama, Chung and Fawwaz, Access 2024  alpha 0.01  beta 0.95  eps floor 0.1
+#
+# The published DynQ configuration sits at alpha 0.786, eight to eighty times
+# larger, which is a table very nearly rewritten on every visit. The ranges
+# below cover both neighbours and exclude that, which is deliberate: a value
+# inside them can be defended by citation, and the old one could only be
+# defended by the search that produced it.
+#
+# Q-static still decides whether to explore by comparing epsilon against
+# EPSLON_THRESHOLD, so the threshold is a real parameter for it. DynQ is
+# epsilon-greedy, so searching it there would spend evaluations on a dimension
+# that changes nothing.
 SEARCH_SPACE = {
     'Qlearning': [
-        ("ALFA",              (0.05, 0.99)),
-        ("BETA",              (0.05, 0.99)),
+        ("ALFA",              (0.01, 0.30)),
+        ("BETA",              (0.40, 0.95)),
         ("EPSLON_DECAY_RATE", (0.005, 0.30)),
-        ("MIN_EPSLON",        (0.01, 0.30)),
+        ("MIN_EPSLON",        (0.01, 0.15)),
     ],
     'QlearningSBRC24': [
-        ("ALFA",              (0.05, 0.99)),
-        ("BETA",              (0.05, 0.99)),
+        ("ALFA",              (0.01, 0.30)),
+        ("BETA",              (0.40, 0.95)),
         ("EPSLON_DECAY_RATE", (0.005, 0.30)),
-        ("MIN_EPSLON",        (0.01, 0.30)),
+        ("MIN_EPSLON",        (0.01, 0.15)),
         ("EPSLON_THRESHOLD",  (0.30, 0.90)),
     ],
     # RL-SF gets the same budget and the same number of dimensions as DynQ, so
@@ -63,10 +81,10 @@ SEARCH_SPACE = {
     # are left out for the same reason DynQ's are: searching the reward changes
     # what the agent is being asked to do, not how well it does it.
     'RLSF': [
-        ("RLSF_ALFA",          (0.05, 0.99)),
-        ("RLSF_BETA",          (0.05, 0.99)),
+        ("RLSF_ALFA",          (0.01, 0.30)),
+        ("RLSF_BETA",          (0.40, 0.95)),
         ("RLSF_EPSILON_DECAY", (0.95, 0.9999)),
-        ("RLSF_EPSILON_END",   (0.01, 0.30)),
+        ("RLSF_EPSILON_END",   (0.01, 0.15)),
     ],
 }
 
@@ -214,6 +232,9 @@ def configure_settings(settings, parameters):
         settings['settings']['regular']['factorial_combinations'] = factor_combinations.split(',')
     settings['log_directory_name']= args.output_folder
     settings['get_sync_node_info'] = args.sync_required
+    settings['settings']['regular']['disturbances'] = (
+        DISTURBANCES if getattr(args, 'disturbances', False) else []
+    )
 
     # Configure simulator with the parameters. The optimiser hands over a
     # positional list, in the order of parameters_position; a parameters file
@@ -264,6 +285,19 @@ def compute_run_lifetime(run_kpis):
     lifetimes = []
     for mote, mote_kpis in run_kpis.items():
         if mote == 'global-stats':
+            continue
+        # Not every key of a run is a mote. compare_schedulers attaches the
+        # learning quantities under 'learning-stats', and counting that as a
+        # mote with no lifetime put a zero into the mean: the average divided
+        # by 51 instead of 50, which lowered the lifetime of every learner by
+        # about 2% and raised its score. MSF and EMSF leave no trace, so they
+        # kept theirs, and every comparison between a learner and one of them
+        # was biased against the learner.
+        #
+        # A mote always carries lifetime_AA_years, as a number or, when it
+        # could not be estimated, as a string that still counts as zero. An
+        # entry without the key is not a mote.
+        if not isinstance(mote_kpis, dict) or 'lifetime_AA_years' not in mote_kpis:
             continue
         lifetime = mote_kpis.get('lifetime_AA_years')
         if not isinstance(lifetime, (int, float)):
@@ -379,6 +413,21 @@ if __name__ == '__main__':
     parser.add_argument('-is_min','--experiment_type', type=str, help='determines the time of experiment (minimization or 2^k)', required=True)
 
     parser.add_argument(
+        '--anchor',
+        help=(
+            'JSON of {learner: {SETTING: value}}. When given, every cell of '
+            'the factorial runs these core values instead of its own '
+            'optimised parameters file. The factorial needs that: with each '
+            'cell separately optimised, a main effect mixes the state factor '
+            'with a different learning rate, and the design no longer '
+            'measures what it says it measures.'
+        )
+    )
+    parser.add_argument(
+        '--disturbances', action='store_true',
+        help='run every cell in the disturbed scenario'
+    )
+    parser.add_argument(
         '--empty-cell-learner', action='store_true',
         help=(
             'run the empty cell as the learner with no state factors, under '
@@ -488,7 +537,12 @@ if __name__ == '__main__':
         plt.savefig("convergence_plot{0}.png".format(random_num))
 
     else:
-        print('lets do the 2^k factorial experiment')   
+        print('lets do the 2^k factorial experiment')
+        ancora = load_anchor(args.anchor) if args.anchor else None
+        if ancora is not None:
+            print('  every cell on the chosen core values: {0}'.format(ancora))
+        print('  disturbances: {0}'.format(
+            len(DISTURBANCES) if args.disturbances else 0))
 
         # build all possibilities of factors
         factors = ['traffic', 'queue', 'charge']
@@ -531,8 +585,17 @@ if __name__ == '__main__':
             cell = cell_name(factor_combination, args.empty_cell_learner)
             output_folder = '{0}_{1}'.format(cell, args.tag) if args.tag else cell
 
-            # empty combination
-            if not factor_combination:
+            # The hyperparameters of this cell. With an anchor they are the
+            # same in every cell, which is what lets a main effect be read as
+            # the effect of the state factor. Without one, each cell keeps
+            # the parameters its own optimisation found, which is how the
+            # published factorial ran.
+            if ancora is not None:
+                aprendiz = ('qstatic'
+                            if factor_combination == ['qlearningSBRC24']
+                            else 'dynq')
+                parameters_list = dict(ancora.get(aprendiz, {}))
+            elif not factor_combination:
                 parameters_list = []
             else:
                 parameters_list = load_optimal_parameters(

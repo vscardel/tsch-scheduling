@@ -6,7 +6,10 @@ import SimEngine
 import netaddr
 import numpy as np
 from .. import MoteDefines as d
-from .state_visits import empty_state_stats, record_action, record_state
+from .learning_rate import step_size
+from .state_visits import (
+    empty_state_stats, record_action, record_decision, record_state
+)
 from math import e
 
 from SimEngine.Mote.sfBase import SchedulingFunctionBase
@@ -47,11 +50,32 @@ class SchedulingFunctionQlearningSBRC24(SchedulingFunctionBase):
         # tau_C of Equation 9, as a fraction of a full battery. The manuscript
         # does not publish any of the three thresholds.
         self.TAU_CHARGE = getattr(self.settings, 'QSTATIC_TAU_CHARGE', 0.5)
+
+        # The same switch DynQ honours, read the same way and meaning the
+        # same thing: false draws every action uniformly and never consults
+        # the table, while the table goes on being updated. One key for the
+        # control arm in both learners, because the alternatives are not
+        # equivalent. Forcing exploration here by setting EPSLON_THRESHOLD
+        # to zero would also change what the phase switch means, which is
+        # exactly how two arms came out byte identical earlier in this
+        # revision.
+        self.LEARNED_POLICY = getattr(self.settings, 'LEARNED_POLICY', True)
+        # Watkins requires the learning rate to shrink; a constant one
+        # never lets the estimate settle. Zero keeps the constant rate
+        # every run so far has used, so nothing changes unless asked.
+        self.ALFA_DECAY_TAU = getattr(self.settings, 'ALFA_DECAY_TAU', 0)
+        self.ALFA_VISITS = {}
+
         # off by default: the manuscript gives the utilisation-aware removal to
         # DynQ alone. On, it runs the same rule, which is what a comparison
         # holding the heuristic constant needs.
+        # On by default, as DynQ's is. Measured both ways, the rule turned
+        # out to be what the two learners' results hang on rather than a
+        # detail, so running one with it and the other without is not a
+        # comparison of the learners. It stays a setting because the
+        # ablation a reviewer asked for needs to turn it off.
         self.SMART_CELL_REMOVAL = getattr(
-            self.settings, 'QSTATIC_SMART_CELL_REMOVAL', False
+            self.settings, 'QSTATIC_SMART_CELL_REMOVAL', True
         )
 
         # Per-mote state. Each mote runs its own Q-learning agent, so none of
@@ -212,13 +236,14 @@ class SchedulingFunctionQlearningSBRC24(SchedulingFunctionBase):
                 self.num_packets_in_current_episode = 0
 
                 explored = not (self.EPSLON < self.EPSLON_THRESHOLD)
-                if explored:
+                at_random = explored or not self.LEARNED_POLICY
+                if at_random:
                     action = random.choice([0,1,2])
                 else:
                     action = self.return_best_q_action(state_number)
                 record_state(self.QLEARNING_STATS, state_number)
                 record_action(
-                    self.QLEARNING_STATS, state_number, action, explored
+                    self.QLEARNING_STATS, state_number, action, at_random
                 )
 
                 # Equations 12 and 13. Both reach zero, in states 111 and 000
@@ -419,10 +444,11 @@ class SchedulingFunctionQlearningSBRC24(SchedulingFunctionBase):
         modification made for DynQ, and adds that "otherwise, the logic of
         insertion or removal is the same as in the baseline".
 
-        QSTATIC_SMART_CELL_REMOVAL turns the utilisation rule on here too, so
-        the two learners can be compared with the heuristic held constant. It
-        is off by default, and DynQ's own SMART_CELL_REMOVAL is on by default,
-        which is why they are two settings and not one.
+        The utilisation rule is on by default here as it is in DynQ, so the
+        two learners are compared with the heuristic held constant. Without
+        it Q-static's schedule can only grow, and the four-arm ablation put
+        the whole of its measured advantage down to that. They stay two
+        settings rather than one so either can be ablated on its own.
 
         This used to compare cell_option, a list, against the bare
         d.CELLOPTION_TX string. That is never true, so every call fell through
@@ -622,7 +648,24 @@ class SchedulingFunctionQlearningSBRC24(SchedulingFunctionBase):
         temporal_difference = (
             reward + self.BETA * best_next_q - self.Q_table[curr_state][action]
         )
-        self.Q_table[curr_state][action] += self.ALFA * temporal_difference
+        alfa = step_size(
+            self.ALFA, self.ALFA_DECAY_TAU, self.ALFA_VISITS,
+            (curr_state, action)
+        )
+        delta_q = alfa * temporal_difference
+        self.Q_table[curr_state][action] += delta_q
+
+        # _record_reward has already advanced the step to the decision this
+        # update scores, so the trace and the cumulative reward agree.
+        record_decision(
+            self.QLEARNING_STATS,
+            step     = self.RECORDED_STEP,
+            asn      = self.engine.getAsn(),
+            reward   = reward,
+            td_error = temporal_difference,
+            delta_q  = delta_q,
+            q_table  = self.Q_table,
+        )
     
     def _compute_queue_ratio(self):
         return len(self.mote.tsch.txQueue)/float(self.settings.tsch_tx_queue_size)

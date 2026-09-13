@@ -10,6 +10,9 @@ import pytest
 from SimEngine.Mote.scheduling_functions.QlearningSBRC24 import (
     SchedulingFunctionQlearningSBRC24 as QStatic
 )
+from SimEngine.Mote.scheduling_functions.state_visits import (
+    empty_state_stats
+)
 
 
 def reward(discrete_state):
@@ -64,14 +67,28 @@ def test_the_three_bits_are_read_in_the_order_they_are_produced():
 
 # ------------------------------------------------------- the Bellman update
 
+class _Clock(object):
+    def getAsn(self):
+        return 0
+
+
 class _Table(object):
-    """A learner reduced to its Q-table and the two constants of Equation 3."""
+    """A learner reduced to its Q-table and the two constants of Equation 3.
+
+    The update also leaves a record of the decision now, so the stub carries
+    the counters and the clock that record reads.
+    """
 
     ALFA = 0.5
     BETA = 0.9
+    ALFA_DECAY_TAU = 0          # the constant rate the paper's runs used
 
     def __init__(self):
         self.Q_table = dict((linha, [0.0, 0.0, 0.0]) for linha in range(8))
+        self.QLEARNING_STATS = empty_state_stats()
+        self.RECORDED_STEP = 0
+        self.ALFA_VISITS = {}
+        self.engine = _Clock()
 
     return_best_q_value = QStatic.__dict__['return_best_q_value']
     compute_q_table = QStatic.__dict__['compute_q_table']
@@ -267,10 +284,13 @@ def test_cells_of_the_other_direction_are_never_offered():
     assert saida == []
 
 
-def test_the_switch_is_off_unless_a_config_turns_it_on():
+def test_the_rule_is_on_unless_a_config_turns_it_off():
+    """Both learners remove cells the same way, which was a decision: the
+    ablation showed the rule and not the learning was what separated
+    them, so leaving it off in one of the two compares the rule."""
     import inspect
     fonte = inspect.getsource(QStatic.__init__)
-    assert "'QSTATIC_SMART_CELL_REMOVAL', False" in fonte
+    assert "'QSTATIC_SMART_CELL_REMOVAL', True" in fonte
 
 
 # ------------------------------------------------------------------- guards

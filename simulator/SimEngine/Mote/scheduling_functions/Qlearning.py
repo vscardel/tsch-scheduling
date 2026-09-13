@@ -10,7 +10,10 @@ import random
 import SimEngine
 
 from .. import MoteDefines as d
-from .state_visits import empty_state_stats, record_action, record_state
+from .learning_rate import step_size
+from .state_visits import (
+    empty_state_stats, record_action, record_decision, record_state
+)
 from math import factorial as fat
 from math import e
 from pprint import pprint
@@ -89,10 +92,26 @@ class SchedulingFunctionQlearning(SchedulingFunctionBase):
         self.SMART_CELL_REMOVAL = getattr(
             self.settings, 'SMART_CELL_REMOVAL', True)
 
-        self.W_THROUGHPUT  = getattr(self.settings, 'W_THROUGHPUT', 1.0)
-        self.W_UTILIZATION = getattr(self.settings, 'W_UTILIZATION', 1.0)
-        self.W_LATENCY     = getattr(self.settings, 'W_LATENCY', 1.0)
-        self.W_ENERGY      = getattr(self.settings, 'W_ENERGY', 1.0)
+        # the published weights, unless the config says otherwise
+        self.W_THROUGHPUT  = getattr(self.settings, 'W_THROUGHPUT', 0.8)
+        self.W_UTILIZATION = getattr(self.settings, 'W_UTILIZATION', 0.2)
+        self.W_LATENCY     = getattr(self.settings, 'W_LATENCY', 0.8)
+        self.W_ENERGY      = getattr(self.settings, 'W_ENERGY', 0.01)
+
+        # Whether the action comes from the Q-table or from a uniform draw.
+        # A run with this false is the control the learned run is measured
+        # against: same seeds, same environment, and the table still gets
+        # updated, so the only thing that differs is whether the table is
+        # consulted. What the learned run gains over that control is what
+        # 'the agent learned something' means, and being a paired effect
+        # size it is comparable between two learners whose rewards are not.
+        self.LEARNED_POLICY = getattr(self.settings, 'LEARNED_POLICY', True)
+        # Watkins requires the learning rate to shrink; a constant one
+        # never lets the estimate settle. Zero keeps the constant rate
+        # every run so far has used, so nothing changes unless asked.
+        self.ALFA_DECAY_TAU = getattr(self.settings, 'ALFA_DECAY_TAU', 0)
+        self.ALFA_VISITS = {}
+
 
         # Per-mote state. Each mote runs its own Q-learning agent, so none of
         # this may live on the class: a mutable class attribute is a single
@@ -101,10 +120,8 @@ class SchedulingFunctionQlearning(SchedulingFunctionBase):
 
         self.charge = 0
         self.old_charge = 0
-        self.reward_charge = 0
-        self.packet_ages = []
+        self.prev_queue_size = None
         self.slotframes_since_decision = 0
-        self.reward_charge_asn = 0
         self.prev_charge = 0
 
         self.last_inserted_cells_info = []
@@ -289,11 +306,17 @@ class SchedulingFunctionQlearning(SchedulingFunctionBase):
             # was crossed and then never draw again, and half the motes never
             # reached the crossing at all.
             explored = random.random() < self.EPSLON
-            if explored:
+            # The control arm draws every action. The coin above is spent
+            # either way, so both arms stay on the same stream of random
+            # numbers for as long as they possibly can.
+            at_random = explored or not self.LEARNED_POLICY
+            if at_random:
                 action = random.choice([0, 1, 2])
             else:
                 action = self.return_best_q_action(state_number)
-            record_action(self.QLEARNING_STATS, state_number, action, explored)
+            record_action(
+                self.QLEARNING_STATS, state_number, action, at_random
+            )
 
 
             # 2) how many cells to move, following the manuscript, but never
@@ -373,7 +396,6 @@ class SchedulingFunctionQlearning(SchedulingFunctionBase):
     def indication_tx_cell_elapsed(self, cell, sent_packet):
         if self.mote.dagRoot:
             return
-        self._record_packet_age(sent_packet)
         self._count_cell_towards_next_decision(cell)
         # if not self._is_minimal_cell(cell):
         #     # self.TX_CELLS_PASSED = self.TX_CELLS_PASSED + 1
@@ -722,15 +744,16 @@ class SchedulingFunctionQlearning(SchedulingFunctionBase):
     
     
     def compute_reward(self):
-        """The weighted sum of four terms, each of them a fraction.
+        """The reward of Equation 16 of the paper, as published.
 
-        Every term is a share of something the mote can measure, so all four
-        span the same range and the weights compare like with like. They did
-        not before: throughput and utilisation were fractions, the latency term
-        was a packet count and the energy term a cell count. A weight then has
-        to absorb the units as well as express a preference, which is why the
-        energy weight had to be 0.01. It was a unit conversion wearing the
-        clothes of a preference.
+        Four terms. Throughput is the mean acknowledged share over the
+        negotiated cells that have transmitted. Utilization is the share of the
+        negotiated cells that were used at least once. Latency is the change in
+        queue length since the previous decision, positive when the queue
+        drained. Energy is the number of negotiated cells. The weights come
+        from the settings; their published values are 0.8, 0.2, 0.8 and 0.01,
+        and the small energy weight is what keeps a cell count on the scale of
+        the three shares.
         """
         preferred_parent = self.mote.rpl.getPreferredParent()
         cells = self.mote.tsch.get_cells(
@@ -738,10 +761,23 @@ class SchedulingFunctionQlearning(SchedulingFunctionBase):
             self.SLOTFRAME_HANDLE
         )
 
-        throughput  = self._reward_throughput(cells)
-        utilization = self._reward_utilization(cells)
-        latency     = self._reward_latency()
-        energy      = self._reward_energy()
+        shares = [
+            cell.num_tx_ack / float(cell.num_tx)
+            for cell in cells if cell.num_tx > 0
+        ]
+        throughput = sum(shares) / float(len(shares)) if shares else 0.0
+
+        used = [min(cell.num_tx, 1) for cell in cells]
+        utilization = sum(used) / float(len(used)) if used else 0.0
+
+        current = len(self.mote.tsch.txQueue)
+        if self.prev_queue_size is None:
+            latency = 0.0
+        else:
+            latency = float(self.prev_queue_size - current)
+        self.prev_queue_size = current
+
+        energy = float(len(cells))
 
         reward = (
             self.W_THROUGHPUT  * throughput +
@@ -758,137 +794,6 @@ class SchedulingFunctionQlearning(SchedulingFunctionBase):
             'reward'     : reward,
         }
         return reward
-
-    def _reward_throughput(self, cells):
-        """Mean acknowledged share over the cells that have transmitted.
-
-        In [0, 1]. Cells that never transmitted have no share to speak of and
-        are left out rather than counted as zero.
-        """
-        shares = [
-            cell.num_tx_ack / float(cell.num_tx)
-            for cell in cells if cell.num_tx > 0
-        ]
-        if not shares:
-            return 0.0
-        return sum(shares) / float(len(shares))
-
-    def _cell_had_its_turn(self, cell):
-        """Whether the cell has been scheduled long enough for its slot to come round.
-
-        A cell occupies one slot of the slotframe, so it gets its first chance
-        to carry a frame one slotframe after it is negotiated. Before that it
-        has had no opportunity at all, and there is nothing to judge it on.
-        """
-        created = getattr(cell, 'created_asn', None)
-        if created is None:
-            # a cell from before this was recorded; judge it
-            return True
-        elapsed = self.engine.getAsn() - created
-        return elapsed >= self.settings.tsch_slotframeLength
-
-    def _reward_utilization(self, cells):
-        """Share of the cells that carried traffic, among those that had a turn.
-
-        In [0, 1]. A cell negotiated moments ago has not seen its slot come
-        round yet. Counting it as idle penalises adding a cell at the instant it
-        is added, while the gain that cell brings only arrives later and is
-        discounted. Measured over 7976 randomly drawn actions, that penalty was
-        90% of the whole reward gap between inserting and doing nothing, and
-        inserting more cells lowered the reward while lowering latency.
-
-        Leaving a cell out until it has had a turn is the same rule the removal
-        criterion and the throughput term already follow: judge a cell on the
-        chances it has had, not on the chances it has not.
-        """
-        judged = [cell for cell in cells if self._cell_had_its_turn(cell)]
-        if not judged:
-            return 0.0
-        used = sum(1 for cell in judged if cell.num_tx > 0)
-        return used / float(len(judged))
-
-    def _record_packet_age(self, packet):
-        """Keep how long a packet had been alive when it went out.
-
-        Called from the TSCH layer every time a transmit cell carries something.
-        A packet stamped by its source arrives here with the whole delay the
-        path has gathered, which is the same quantity compute_kpis reports.
-        """
-        if not packet:
-            return
-        stamp = packet.get(u'app', {}).get(u'timestamp')
-        if stamp is None:
-            return                     # control traffic carries no stamp
-        self.packet_ages.append(self.engine.getAsn() - stamp)
-        if len(self.packet_ages) > self.SLOTFRAME_INTERVAL_SIZE:
-            self.packet_ages.pop(0)
-
-    def _reward_latency(self):
-        """How long the packets waiting to be sent have been waiting, in [0, 1].
-
-        Every application packet carries the ASN at which it was created, and
-        compute_kpis builds the reported latency from exactly that stamp. So a
-        mote can read a packet's age off the packet itself, in the same units as
-        the metric the paper reports, without knowing anything about the rest of
-        the network. Relayed packets carry the stamp of whoever created them, so
-        their age is the delay the path has accumulated so far.
-
-        This replaces two earlier proxies. Delta Q, the change in queue length,
-        averages to zero once a mote settles and so says nothing about whether
-        the queue is short. Queue occupancy says how many packets wait but not
-        how long, and it cannot see a packet held up by a distant cell or by
-        retransmission, only one held up by a full queue.
-
-        Zero packets waiting is the best case and scores 1. The reference for
-        the worst case is the time to drain a full queue at one packet per
-        slotframe, which is set by the schedule rather than chosen.
-        """
-        now = self.engine.getAsn()
-        waiting = [
-            now - packet[u'app'][u'timestamp']
-            for packet in self.mote.tsch.txQueue
-            if u'app' in packet and u'timestamp' in packet[u'app']
-        ]
-        ages = self.packet_ages + waiting
-        if not ages:
-            return 1.0
-        mean_age = sum(ages) / float(len(ages))
-        reference = float(
-            self.settings.tsch_tx_queue_size * self.settings.tsch_slotframeLength
-        )
-        return 1.0 - min(1.0, mean_age / reference)
-
-    def _reward_energy(self):
-        """Share of the charge the radio could have drawn, in [0, 1].
-
-        The simulator already carries a cost per radio operation, and
-        _compute_charge already uses it for the state. Counting cells instead
-        threw that away: a TX cell that transmits costs 54.5 uC and an RX cell
-        that only listens costs 6.4, eight times less, and counting cells prices
-        them the same. A cell that is allocated and never used costs almost
-        nothing and was the one the count penalised most.
-
-        Reading the charge also answers the question of granularity by cell type
-        on its own, since the cost model already separates transmitting,
-        receiving, listening and sleeping.
-
-        The reference is the most the radio could have drawn over the same
-        stretch, which is every slot spent transmitting and hearing an
-        acknowledgement. That is a bound the hardware sets, not a constant
-        chosen to make the number look right. Motes sleep most slots, so in
-        practice this term sits low and moves little, which is a fact about the
-        scenario rather than a property of the scale.
-        """
-        now = self.engine.getAsn()
-        total = self._total_charge()
-        spent = total - self.reward_charge
-        elapsed = now - self.reward_charge_asn
-        self.reward_charge = total
-        self.reward_charge_asn = now
-        if elapsed <= 0:
-            return 0.0
-        most = elapsed * d.CHARGE_TxDataRxAck_uC
-        return min(1.0, max(0.0, spent / float(most)))
 
     def discretize_queue_ratio(self,queue_ratio):
         average_queue_ratio = self._compute_queue_average_ratio(queue_ratio)
@@ -990,7 +895,25 @@ class SchedulingFunctionQlearning(SchedulingFunctionBase):
 
 
         # Update Q-value using Q-learning update rule
-        self.Q_table[curr_state_number][action] += self.ALFA * temporal_difference
+        alfa = step_size(
+            self.ALFA, self.ALFA_DECAY_TAU, self.ALFA_VISITS,
+            (curr_state_number, action)
+        )
+        delta_q = alfa * temporal_difference
+        self.Q_table[curr_state_number][action] += delta_q
+
+        # RECORDED_STEP still numbers the decision being scored here: the
+        # reward belongs to the action taken last time round, and the step
+        # is only advanced once this update is done.
+        record_decision(
+            self.QLEARNING_STATS,
+            step     = self.RECORDED_STEP,
+            asn      = self.engine.getAsn(),
+            reward   = reward,
+            td_error = temporal_difference,
+            delta_q  = delta_q,
+            q_table  = self.Q_table,
+        )
         # print(self.Q_table)
         # from pprint import pprint 
         # print(reward)

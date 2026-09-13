@@ -53,12 +53,15 @@
             "sixlowpan_reassembly_buffers_num": 1, 
             "SLOTFRAME_INTERVAL_SIZE": 10, 
             "sf_class": "Qlearning", 
-            "W_THROUGHPUT": 1, 
-            "W_UTILIZATION": 1, 
-            "W_LATENCY": 1, 
-            "W_ENERGY": 1, 
+            "W_THROUGHPUT": 0.8, 
+            "W_UTILIZATION": 0.2, 
+            "W_LATENCY": 0.8, 
+            "W_ENERGY": 0.01, 
             "MAX_SLOTFRAMES_BETWEEN_DECISIONS": 50, 
-            "LAMBDA": 2
+            "LAMBDA": 2, 
+            "LEARNED_POLICY": true, 
+            "ALFA_DECAY_TAU": 0, 
+            "disturbances": []
         }, 
         "combination": {
             "exec_numMotes": [

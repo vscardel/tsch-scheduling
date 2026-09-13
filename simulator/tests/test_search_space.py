@@ -89,24 +89,51 @@ def test_budget_honours_what_is_asked_for():
     assert rx.optimisation_budget(30, 8) == (30, 8)
 
 
-# what a first pass over the old, narrower box returned; two of these sat
-# exactly on their upper bound, which is the box talking and not the method
-OTIMOS_DA_CAIXA_ANTIGA = {
-    'ALFA': 0.9,
-    'BETA': 0.5625998437793637,
-    'EPSLON_DECAY_RATE': 0.09,
-    'MIN_EPSLON': 0.09002897521343009,
+# What two 6TiSCH Q-learning schedulers from the same group actually use, one
+# of them the RL-SF baseline in this repository. The ranges exist to contain
+# these, so that a chosen value can be defended by citation.
+#
+#   Pratama and Chung, ICEIEC 2022
+#   Pratama, Chung and Fawwaz, IEEE Access 2024, doi 10.1109/ACCESS.2024.3384869
+VIZINHOS_6TISCH = [
+    {'ALFA': 0.1,  'BETA': 0.95, 'MIN_EPSLON': 0.1},
+    {'ALFA': 0.01, 'BETA': 0.95, 'MIN_EPSLON': 0.1},
+]
+
+# what the old, much wider box returned for DynQ
+OTIMO_PUBLICADO = {
+    'ALFA': 0.7863156043331933,
+    'BETA': 0.4377865110128446,
+    'MIN_EPSLON': 0.19096869607843248,
 }
 
 
-def test_the_old_optima_are_no_longer_on_a_bound():
-    faixas = dict(rx.search_space('Qlearning'))
-    for nome, valor in OTIMOS_DA_CAIXA_ANTIGA.items():
-        baixo, alto = faixas[nome]
-        assert baixo < valor < alto, (
-            '{0}={1} still sits on the edge of [{2}, {3}]'.format(
-                nome, valor, baixo, alto)
-        )
+def test_the_ranges_contain_what_the_neighbouring_papers_use():
+    """A value inside them can be defended by citation. That is the point of
+    narrowing the box, and it only works if the citations fall inside."""
+    for sf in ('Qlearning', 'QlearningSBRC24'):
+        faixas = dict(rx.search_space(sf))
+        for vizinho in VIZINHOS_6TISCH:
+            for nome, valor in vizinho.items():
+                baixo, alto = faixas[nome]
+                assert baixo <= valor <= alto, (
+                    '{0} of {1} is outside [{2}, {3}] for {4}'.format(
+                        nome, valor, baixo, alto, sf)
+                )
+
+
+def test_the_published_learning_rate_is_deliberately_excluded():
+    """0.786 rewrites the table on very nearly every visit, and Sutton and
+    Barto's argument for a constant rate is an argument for a small one. The
+    exclusion is a decision, so it is pinned rather than left to drift."""
+    baixo, alto = dict(rx.search_space('Qlearning'))['ALFA']
+    assert not baixo <= OTIMO_PUBLICADO['ALFA'] <= alto
+
+
+def test_the_published_discount_factor_still_fits():
+    """Only the learning rate was badly out of range; beta was fine."""
+    baixo, alto = dict(rx.search_space('Qlearning'))['BETA']
+    assert baixo <= OTIMO_PUBLICADO['BETA'] <= alto
 
 
 def test_the_learners_share_the_ranges_they_have_in_common():

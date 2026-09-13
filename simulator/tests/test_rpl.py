@@ -604,3 +604,113 @@ def test_dodag_parent(sim_engine, fixture_rank_value):
         )
         assert len(logs) == 1
         assert logs[0]['packet']['app']['rank'] == 65535
+
+
+def test_a_hundred_failures_without_an_ack_does_not_end_the_run(sim_engine):
+    """The cutoff is reachable with no acknowledgement at all.
+
+    OF0 marks a link unacceptable after ten consecutive failures but leaves
+    numTx running, so a mote with no better parent to move to keeps
+    transmitting on the same cell until numTx reaches ETX_NUM_TX_CUTOFF with
+    numTxAck still at zero. An assertion used to stand where the ratio is
+    computed, and it ended the run. Degrading the links of a live network is
+    what makes it happen, so it appeared the first time a run was disturbed
+    on purpose, at 94% of a run of 15000 slotframes.
+    """
+    sim_engine = sim_engine(
+        diff_config = {
+            'exec_numMotes'  : 2,
+            'secjoin_enabled': False,
+            # the objective function that keeps the ETX counters
+            'rpl_of'         : 'OF0',
+            # two motes is fewer than the random topology's minimum neighbour
+            # count, and the ETX bookkeeping does not care about the topology
+            'conn_class'     : 'FullyMeshed'
+        }
+    )
+    root = sim_engine.motes[0]
+    mote = sim_engine.motes[1]
+
+    # the same joining dance as test_upper_limit_of_accepatble_etx: the
+    # objective function is installed when the mote synchronises, so a mote
+    # that has not joined still has RplOFNone and no ETX counters
+    eb = root.tsch._create_EB()
+    eb_dummy = {
+        'type':            d.PKT_TYPE_EB,
+        'mac': {
+            'srcMac':      '00-00-00-AA-AA-AA',
+            'dstMac':      d.BROADCAST_ADDRESS,
+            'join_metric': 1000
+        }
+    }
+    mote.tsch._action_receiveEB(eb)
+    mote.tsch._action_receiveEB(eb_dummy)
+    dio = root.rpl._create_DIO()
+    dio['mac'] = {'srcMac': root.get_mac_addr()}
+    mote.rpl.action_receiveDIO(dio)
+
+    mote.tsch.addCell(1, 1, root.get_mac_addr(), [d.CELLOPTION_TX])
+    cell = mote.tsch.get_cells(root.get_mac_addr())[0]
+
+    vizinho = mote.rpl.of._find_neighbor(root.get_mac_addr())
+    vizinho['numTx'] = mote.rpl.of.ETX_NUM_TX_CUTOFF - 1
+    vizinho['numTxAck'] = 0
+
+    # the attempt that reaches the cutoff, and it fails like the ninety nine
+    # before it
+    mote.rpl.of.update_etx(cell, root.get_mac_addr(), isACKed=False)
+
+    assert vizinho['etx'] > mote.rpl.of.UPPER_LIMIT_OF_ACCEPTABLE_ETX
+    assert vizinho['numTx'] == 0
+    assert vizinho['numTxAck'] == 0
+
+
+def test_the_ratio_is_unchanged_when_an_ack_did_arrive(sim_engine):
+    """The fix touches only the case that used to raise.
+
+    Every run of this project so far went through the other branch, so it has
+    to compute exactly what it computed before.
+    """
+    sim_engine = sim_engine(
+        diff_config = {
+            'exec_numMotes'  : 2,
+            'secjoin_enabled': False,
+            # the objective function that keeps the ETX counters
+            'rpl_of'         : 'OF0',
+            # two motes is fewer than the random topology's minimum neighbour
+            # count, and the ETX bookkeeping does not care about the topology
+            'conn_class'     : 'FullyMeshed'
+        }
+    )
+    root = sim_engine.motes[0]
+    mote = sim_engine.motes[1]
+
+    # the same joining dance as test_upper_limit_of_accepatble_etx: the
+    # objective function is installed when the mote synchronises, so a mote
+    # that has not joined still has RplOFNone and no ETX counters
+    eb = root.tsch._create_EB()
+    eb_dummy = {
+        'type':            d.PKT_TYPE_EB,
+        'mac': {
+            'srcMac':      '00-00-00-AA-AA-AA',
+            'dstMac':      d.BROADCAST_ADDRESS,
+            'join_metric': 1000
+        }
+    }
+    mote.tsch._action_receiveEB(eb)
+    mote.tsch._action_receiveEB(eb_dummy)
+    dio = root.rpl._create_DIO()
+    dio['mac'] = {'srcMac': root.get_mac_addr()}
+    mote.rpl.action_receiveDIO(dio)
+
+    mote.tsch.addCell(1, 1, root.get_mac_addr(), [d.CELLOPTION_TX])
+    cell = mote.tsch.get_cells(root.get_mac_addr())[0]
+
+    vizinho = mote.rpl.of._find_neighbor(root.get_mac_addr())
+    vizinho['numTx'] = mote.rpl.of.ETX_NUM_TX_CUTOFF - 1
+    vizinho['numTxAck'] = 50
+
+    mote.rpl.of.update_etx(cell, root.get_mac_addr(), isACKed=True)
+
+    esperado = float(mote.rpl.of.ETX_NUM_TX_CUTOFF) / 51
+    assert vizinho['etx'] == esperado

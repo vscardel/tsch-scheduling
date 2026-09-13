@@ -1,7 +1,9 @@
 # tsch-scheduling
 
 Two Q-learning scheduling functions for TSCH, built on a fork of the
-[6TiSCH Simulator](https://github.com/openwsn-berkeley/6tisch-simulator).
+[6TiSCH Simulator](https://github.com/openwsn-berkeley/6tisch-simulator):
+DynQ (dynamic discretisation) and Q-static (fixed thresholds). They are
+compared against MSF (RFC 9033), EMSF and RL-SF.
 
 ## Setup
 
@@ -11,58 +13,145 @@ You need Docker. You do not need Python on your machine.
 docker compose build
 ```
 
-## Running an experiment
+Every command below runs from the repository root. Simulations write to
+`simulator/bin/simData/`, which git ignores.
+
+## Parameters
+
+The results use these settings, all versioned in `simulator/bin/`:
+
+| File | What it holds |
+| --- | --- |
+| `config.json` | The scenario: 101-slot slotframes, 10 ms slots, 16 channels, queue of 5 packets, RPL with OF0, reward weights 0.8, 0.2, 0.8, 0.01. |
+| `anchor_escolhido.json` | The core learning parameters chosen by the sensitivity sweep. DynQ: α = 0.1, γ = 0.95, ε_min = 0.15. Q-static: γ = 0.7. |
+| `traffic_queue_charge_parameters.json` | DynQ's remaining parameters, such as the ε decay rate. |
+| `qlearningSBRC24_parameters.json` | Q-static's remaining parameters, including the ε threshold of 0.3. |
+
+The comparison reads `config.json`, applies the scheduler's parameters file,
+then applies the anchor on top. The factorial applies only the anchor, so its
+cells take every other setting from `config.json`. Each run writes the config
+it used to `simulator/bin/config_<name>.json`.
+
+## Reproducing the results
+
+All experiments use 10 runs of 15000 slotframes each. Runs are seeded by run
+index, so run 3 of every scheduler sees the same topology. That is what makes
+the comparisons paired.
+
+### 1. Scheduler comparison
 
 ```bash
-docker compose run --rm sim python runExperiments.py \
-  -cb 50 \
-  -nr 10 \
-  -nc 8 \
-  -sf Qlearning \
-  -app AppBurst \
-  -cc Random \
-  -nslots 3750 \
-  -of results_dynq \
-  -is_min minimization
+docker compose run --rm sim python runComparison.py \
+  --motes 50 \
+  --arms dynq,qstatic,rlsf,msf,emsf \
+  --runs 10 \
+  --cpus 10 \
+  --slotframes 15000 \
+  --anchor anchor_escolhido.json
 ```
 
-Results are written to the output folder inside your working copy.
+Each scheduler lands in `simData/<arm>_n<motes>/` and its KPIs are computed at
+the end. On 10 cores, one scheduler at 50 motes takes 15 to 35 minutes.
 
-Use `-is_min 2k` for the 2³ factorial experiment. Everything else stays the same.
+The other scenarios are the same command with one change:
 
-### Required arguments
+| Scenario | Change |
+| --- | --- |
+| 100 motes | `--motes 100` |
+| Linear topology | `--conn-class Linear` |
+| Periodic traffic | `--app AppPeriodic` |
+
+The default traffic is `AppRandom`: every 60 s, each mote sends a burst of 1 to
+10 packets. The default topology is `Random`, with link quality from the
+Pister-Hack model. Output folders have the same names in every scenario, so run
+each one in a fresh `simData/` or move the previous one away first.
+
+`runComparison.py` flags:
 
 | Flag | Meaning |
 | --- | --- |
-| `-cb` | Network sizes to simulate. Takes a list: `-cb 20 50 100` runs all three. |
-| `-nr` | Runs per network size. Results are averaged over these. |
-| `-nc` | CPU cores to use. |
-| `-sf` | Scheduling function. See the table below. |
-| `-app` | Traffic pattern. `AppBurst`, `AppPeriodic`, `AppRandom`. |
-| `-cc` | Topology. `Random`, `Linear`, `FullyMeshed`, `K7`. |
-| `-nslots` | Simulation length in slotframes. A slotframe is 10 ms. |
-| `-of` | Output folder name. |
-| `-is_min` | `minimization` or `2k`. |
+| `--motes` | Network sizes, as a list. The area grows with the count, so density stays the same. |
+| `--arms` | Comma-separated schedulers: `dynq`, `qstatic`, `rlsf`, `msf`, `emsf`. |
+| `--runs` | Runs per scheduler. |
+| `--cpus` | Cores. Runs are spread across them. |
+| `--slotframes` | Length of each run. |
+| `--anchor` | JSON with the core learning parameters. |
+| `--app` | Traffic class, overriding `config.json`. |
+| `--conn-class` | Topology class, overriding `config.json`. |
 
-### Optional arguments
+### 2. 2³ factorial
 
-| Flag | Meaning |
-| --- | --- |
-| `-fc` | Which state factors to use, comma separated: `traffic,queue,charge`. Defaults to all three. |
-| `-ne` | Number of evaluations in the Bayesian optimization. |
-| `-nrs` | Number of random starts before the optimizer takes over. |
-| `-af` | Acquisition function for `gp_minimize`. |
-| `-sr` | Collect synchronization info during the run. |
+Eight cells, one per combination of the state factors traffic, queue and
+charge. The cell with no factor runs MSF.
 
-### Scheduling functions
+```bash
+for cell in baseline traffic queue charge traffic_queue traffic_charge queue_charge traffic_queue_charge; do
+  docker compose run --rm sim python runExperiments.py \
+    -cb 50 -nr 10 -nc 10 \
+    -sf Qlearning -app AppRandom -cc Random \
+    -nslots 15000 -of factorial -is_min 2k \
+    --anchor anchor_escolhido.json \
+    --cells "$cell"
+done
+```
 
-| `-sf` value | Scheduler |
-| --- | --- |
-| `Qlearning` | DynQ, dynamic Q-learning |
-| `QlearningSBRC24` | Q-static, threshold based Q-learning |
-| `MSF` | Minimal Scheduling Function, RFC 9033 |
-| `EMSF` | Enhanced Minimal Scheduling Function |
-| `SFNone` | No scheduling function |
+Each cell lands in `simData/<cell>/`.
+
+### 3. Statistics
+
+Paired comparison per metric: Wilcoxon signed-rank test (exact), Holm
+correction, bootstrap confidence interval and rank-biserial effect size.
+
+```bash
+docker compose run --rm sim python compare_schedulers.py \
+  --inputfolder simData --motes 50 \
+  --schedulers dynq_n50 qstatic_n50 rlsf_n50 msf_n50 emsf_n50 \
+  --network-only --out comparison_50.json
+```
+
+Factorial ANOVA on the score and on each metric:
+
+```bash
+docker compose run --rm sim python factorial_anova.py \
+  --inputfolder simData --motes 50 --empty-cell baseline \
+  --out anova.json --latex table_2k.tex
+```
+
+How the scheduler ranking changes when the score constants change:
+
+```bash
+docker compose run --rm sim python score_sensitivity.py \
+  --inputfolder simData --motes 50 \
+  --arms dynq qstatic rlsf msf emsf
+```
+
+The score is defined once, in `score_model.py`.
+
+### 4. Figures
+
+```bash
+docker compose run --rm sim python final_figures.py \
+  --inputfolder simData --motes 50 \
+  --arms dynq qstatic rlsf msf emsf --out figures
+
+docker compose run --rm sim python factorial_figure.py \
+  --anova anova.json --out figures/contributions.pdf
+```
+
+`final_figures.py` draws one boxplot per metric, the DynQ reward curve and the
+ε decay of one mote of each learner. `--zero-fill` draws the reward curve with
+the arithmetic of the original figure, where a mote that has not reached an
+episode counts as zero.
+
+## Scheduling functions
+
+| Arm | `sf_class` | Scheduler |
+| --- | --- | --- |
+| `dynq` | `Qlearning` | DynQ, dynamic Q-learning |
+| `qstatic` | `QlearningSBRC24` | Q-static, threshold-based Q-learning |
+| `rlsf` | `RLSF` | RL-SF (Pratama and Chung, 2022) |
+| `msf` | `MSF` | Minimal Scheduling Function, RFC 9033 |
+| `emsf` | `EMSF` | Enhanced Minimal Scheduling Function |
 
 ## Working inside the container
 
@@ -75,7 +164,7 @@ apply immediately.
 
 ## Running without Docker
 
-Needs Python 2.7 on linux/x86_64. 
+Needs Python 2.7 on linux/x86_64.
 
 ```bash
 python2 -m virtualenv venv
