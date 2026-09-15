@@ -205,6 +205,25 @@ def test_the_bit_can_be_zero_and_one():
     assert vazia.discretize_energy(vazia._compute_charge()) == 0
 
 
+def test_the_battery_is_the_one_the_lifetime_assumes():
+    """compute_kpis estimates lifetime from an AA battery of 2821.5 mAh.
+
+    The state read 2821500 as uC, which is that capacity in uAh, so the agent
+    saw a battery 3600 times smaller than the one the lifetime is quoted for.
+    """
+    assert QStatic.INITIAL_REMAINING_BATTERY == pytest.approx(2821.5 * 3.6e6)
+
+
+def test_a_run_of_idle_listening_does_not_halve_the_battery():
+    """15000 slotframes of 101 slots, every slot spent listening, which is more
+    than any mote draws. With the capacity read as uC this emptied the
+    battery; half of an AA battery is out of reach in one run."""
+    slots = 15000 * 101
+    bateria = _Battery(idle_listen=slots)
+    assert bateria._compute_charge() > 0.99
+    assert bateria.discretize_energy(bateria._compute_charge()) == 1
+
+
 def test_the_threshold_is_a_setting_not_a_constant():
     """The manuscript never publishes tau_C, so it must be tunable."""
     import inspect

@@ -25,7 +25,12 @@ class SchedulingFunctionQlearningSBRC24(SchedulingFunctionBase):
     NUM_INITIAL_NEGOTIATED_TX_CELLS = 1
     NUM_INITIAL_NEGOTIATED_RX_CELLS = 0
     MAX_EPSLON = 1
-    INITIAL_REMAINING_BATTERY = 2821500
+    # The AA battery compute_kpis estimates the lifetime with, 2821.5 mAh, in
+    # the uC that _spent_charge adds up. It used to be 2821500, the capacity in
+    # uAh read as uC: a battery 3600 times smaller than the one the lifetime
+    # assumes, which fell below half within a single run and took the
+    # desirable state, and every positive reward, away from the agent.
+    INITIAL_REMAINING_BATTERY = 2821.5 * 3600 * 1000
 
     num_states = 8
     # S_f of Equation 11: q_static.tex describes it as low traffic, low buffer
